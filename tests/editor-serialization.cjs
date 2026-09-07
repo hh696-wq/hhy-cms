@@ -1,0 +1,16 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const path = require('node:path');
+const source = fs.readFileSync(path.join(__dirname, '../public/admin-editor.js'), 'utf8');
+const context = vm.createContext({});
+vm.runInContext(source.slice(0, source.indexOf('for (const box of document.querySelectorAll')), context);
+const html = ops => context.cmsDeltaHtml({ops});
+assert.equal(html([{insert:'A & B < 5\n'}]), '<p>A &amp; B &lt; 5</p>');
+assert.equal(html([{insert:'bold',attributes:{bold:true}},{insert:'\n'}]), '<p><strong>bold</strong></p>');
+assert.equal(html([{insert:'Title'},{insert:'\n',attributes:{header:2}}]), '<h2>Title</h2>');
+assert.equal(html([{insert:'one'},{insert:'\n',attributes:{list:'bullet'}},{insert:'two'},{insert:'\n',attributes:{list:'bullet'}},{insert:'plain\n'}]), '<ul><li>one</li><li>two</li></ul><p>plain</p>');
+assert.equal(html([{insert:'<script>bad()</script>\n'}]), '<p>&lt;script&gt;bad()&lt;/script&gt;</p>');
+assert.equal(html([{insert:{image:'javascript:bad()'}},{insert:'\n'}]), '');
+assert.equal(html([{insert:'\n'}]), '');
+console.log('PASS editor serialization: entities, bold, headings, lists, markup, embeds and empty content');

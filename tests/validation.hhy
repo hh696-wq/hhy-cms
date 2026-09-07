@@ -36,4 +36,7 @@ check(not (attempt { manage.normalize_navigation("错误|/|extra") }).ok,"naviga
 check(not (attempt { manage.normalize_navigation(" |/") }).ok,"navigation rejects empty labels")
 check(not (attempt { manage.normalize_navigation("1|/\n2|/\n3|/\n4|/\n5|/\n6|/\n7|/\n8|/\n9|/\n10|/\n11|/") }).ok,"navigation enforces ten-entry limit")
 
+check(c.rich("<p>A &amp; B &lt; 5</p>") == "<p>A &amp; B &lt; 5</p>","editor text entities render once")
+check(c.rich("&lt;script&gt;bad&lt;/script&gt;") == "&lt;script&gt;bad&lt;/script&gt;","encoded scripts stay text")
+check(c.rich("&lt;strong&gt;text&lt;/strong&gt;") == "&lt;strong&gt;text&lt;/strong&gt;","encoded presentation markup stays literal text")
 print("All validation tests passed.")

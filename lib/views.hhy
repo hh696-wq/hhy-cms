@@ -1,13 +1,16 @@
 import "core.hhy" as c
 
 export fn document(title, content) {
-    return "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>" + c.e(title) + "</title><link rel=\"stylesheet\" href=\"/assets/style.css\"><script src=\"/assets/editor.js\" defer></script></head><body>" + content + "</body></html>"
+    return "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>" + c.e(title) + "</title><link rel=\"stylesheet\" href=\"/assets/style.css?v=0.1.2\"><script src=\"/assets/editor.js?v=0.1.2\" defer></script></head><body>" + content + "</body></html>"
 }
 export fn field(label, name, value, type) {
     return "<label class=\"field\"><span>" + c.e(label) + "</span><input type=\"" + type + "\" name=\"" + name + "\" value=\"" + c.e(value) + "\"></label>"
 }
 export fn area(label, name, value) {
     return "<label class=\"field\"><span>" + c.e(label) + "</span><textarea name=\"" + name + "\" rows=\"8\">" + c.e(value) + "</textarea></label>"
+}
+export fn rich_editor(body) {
+    return "<section class=\"rich-editor\" data-rich-editor><h2>正文</h2><p class=\"muted\">直接编辑排版后的内容，支持标题、列表、引用、加粗和斜体。</p><div data-rich-initial hidden>" + c.rich(body) + "</div><div data-rich-toolbar hidden><select class=\"ql-header\" aria-label=\"段落样式\"><option selected value=\"\">正文</option><option value=\"2\">标题</option><option value=\"3\">小标题</option></select><button type=\"button\" class=\"ql-bold\" aria-label=\"加粗\"></button><button type=\"button\" class=\"ql-italic\" aria-label=\"斜体\"></button><button type=\"button\" class=\"ql-list\" value=\"ordered\" aria-label=\"有序列表\"></button><button type=\"button\" class=\"ql-list\" value=\"bullet\" aria-label=\"无序列表\"></button><button type=\"button\" class=\"ql-blockquote\" aria-label=\"引用\"></button><button type=\"button\" class=\"ql-clean\" aria-label=\"清除格式\"></button><button type=\"button\" data-rich-undo>撤销</button><button type=\"button\" data-rich-redo>重做</button></div><div data-rich-surface hidden></div>" + area("正文 HTML（编辑器未加载时可使用）","body",body) + "<p class=\"muted\" data-rich-status role=\"status\"></p></section>"
 }
 export fn hidden(name, value) { return "<input type=\"hidden\" name=\"" + name + "\" value=\"" + c.e(value) + "\">" }
 export fn form(action, csrf, content) { return "<form method=\"post\" enctype=\"multipart/form-data\" action=\"" + action + "\">" + hidden("csrf", csrf) + content + "</form>" }
@@ -33,7 +36,7 @@ export fn admin(title, body, user, active) {
         if active == item.key { cls = "active" }
         nav = nav + "<a class=\"" + cls + "\" href=\"" + item.url + "\">" + item.title + "</a>"
     }
-    return document(title + " · HHY CMS", "<div class=\"admin-shell\"><aside class=\"sidebar\"><a class=\"brand\" href=\"/admin\"><b class=\"mark\">H</b> HHY <span>CMS</span></a><div class=\"side-label\">网站管理</div><nav>" + nav + "</nav><div class=\"side-bottom\"><a href=\"/\" target=\"_blank\">查看官网 ↗</a><small>HHY 驱动 · 内容由你掌控</small></div></aside><main class=\"admin-main\"><header class=\"admin-header\"><span>企业内容管理</span><div>" + c.e(user.username) + form("/admin/logout", user.csrf, "<button class=\"link-button\">退出</button>") + "</div></header><div class=\"workspace\"><div class=\"page-heading\"><div><div class=\"eyebrow\">YOUR WEBSITE, IN YOUR HANDS</div><h1>" + c.e(title) + "</h1></div><span class=\"pill\">HHY CMS / 0.1.1</span></div>" + body + "</div></main></div>")
+    return document(title + " · HHY CMS", "<link rel=\"stylesheet\" href=\"/assets/vendor/quill/quill.snow.css\"><script src=\"/assets/vendor/quill/quill.js\" defer></script><script src=\"/assets/admin-editor.js?v=0.1.2\" defer></script><div class=\"admin-shell\"><aside class=\"sidebar\"><a class=\"brand\" href=\"/admin\"><b class=\"mark\">H</b> HHY <span>CMS</span></a><div class=\"side-label\">网站管理</div><nav>" + nav + "</nav><div class=\"side-bottom\"><a href=\"/\" target=\"_blank\">查看官网 ↗</a><small>HHY 驱动 · 内容由你掌控</small></div></aside><main class=\"admin-main\"><header class=\"admin-header\"><span>企业内容管理</span><div>" + c.e(user.username) + form("/admin/logout", user.csrf, "<button class=\"link-button\">退出</button>") + "</div></header><div class=\"workspace\"><div class=\"page-heading\"><div><div class=\"eyebrow\">YOUR WEBSITE, IN YOUR HANDS</div><h1>" + c.e(title) + "</h1></div><span class=\"pill\">HHY CMS / 0.1.2</span></div>" + body + "</div></main></div>")
 }
 export fn error(message, status) { return c.response(document("操作未完成", "<main class=\"setup-card\"><div class=\"eyebrow\">HHY CMS</div><h1>操作未完成</h1>" + notice(message) + "<p><a href=\"/admin\">返回后台</a> · <a href=\"/install\">返回安装向导</a></p></main>"), status) }
 

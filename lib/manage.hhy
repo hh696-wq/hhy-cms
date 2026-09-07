@@ -110,6 +110,15 @@ export fn save_category(db,user,f) {
     } catch err { let ignored = attempt { database.rollback(tx) }; throw(err) }
     return c.redirect("/admin/categories?saved=1")
 }
+export fn media_search(request,db) {
+    let q = c.clean(request.query_params.q,100)
+    let page = c.integer(c.fallback(request.query_params.page,"1"))
+    if page < 1 or page > 10000 { throw("页码无效") }
+    let pattern = "%" + q + "%"
+    let total = c.first(db,"SELECT COUNT(*) AS total FROM cms_media WHERE original_name LIKE ?",[pattern])
+    let rows = c.query(db,"SELECT id,original_name,filename,size FROM cms_media WHERE original_name LIKE ? ORDER BY id DESC LIMIT 24 OFFSET ?",[pattern,(page-1)*24])
+    return web.json({items:rows,page:page,total:to_int(total.total)},{headers:{"Cache-Control":"no-store"}})
+}
 export fn media_page(request,db,user) {
     let page = c.integer(c.fallback(request.query_params.page,"1"))
     if page < 1 or page > 10000 { throw("页码无效") }
@@ -135,6 +144,7 @@ export fn upload(db,user,form) {
     let result = attempt { c.exec(db,"INSERT INTO cms_media(filename,original_name,size) VALUES (?,?,?)",[name,c.clean(image.filename,255),image.size]) }
     if not result.ok { remove(c.file("uploads/" + name)); throw("图片记录保存失败，请重试") }
     c.audit(db,user.username,"media.upload",c.str(result.value.last_insert_id))
+    if form.fields.response == "json" { return web.json({item:{id:result.value.last_insert_id,original_name:c.clean(image.filename,255),filename:name,size:image.size}},{status:201}) }
     return c.redirect("/admin/media?saved=1")
 }
 export fn delete_media(db,user,f) {

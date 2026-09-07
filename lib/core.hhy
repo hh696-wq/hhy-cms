@@ -58,7 +58,9 @@ export fn rich(value) {
         out = replace(out, "&lt;" + tag + "&gt;", "<" + tag + ">")
         out = replace(out, "&lt;/" + tag + "&gt;", "</" + tag + ">")
     }
-    return out
+    # Decode serialized text entities only after recognizing allowed literal tags.
+    # Encoded markup remains text, never becoming an executable tag.
+    return out |> replace("&amp;lt;","&lt;") |> replace("&amp;gt;","&gt;") |> replace("&amp;quot;","&quot;") |> replace("&amp;#39;","&#39;") |> replace("&amp;amp;","&amp;")
 }
 export fn clean(value, max) {
     let v = trim(fallback(value,""))

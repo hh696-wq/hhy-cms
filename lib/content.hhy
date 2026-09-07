@@ -9,13 +9,11 @@ fn categories(db, kind, selected) {
     return "<label class=\"field\"><span>分类</span><select name=\"category_id\">" + options + "</select></label>"
 }
 export fn media_select(db, name, selected) {
-    let mut options = v.option("0","不使用图片",selected)
-    if selected != null and c.str(selected) != "0" and c.str(selected) != "" {
-        let chosen = c.first(db,"SELECT id,original_name FROM cms_media WHERE id=?",[selected])
-        if chosen != null { options = options + v.option(chosen.id,"当前：" + chosen.original_name,selected) }
-    }
-    for row in c.query(db,"SELECT id,original_name FROM cms_media ORDER BY id DESC LIMIT 200",[]) { options = options + v.option(row.id,row.original_name + " (#" + row.id + ")",selected) }
-    return "<label class=\"field\"><span>封面 / 标识图片（媒体库最近 200 张）</span><select name=\"" + name + "\">" + options + "</select></label>"
+    let id = c.integer(c.fallback(selected,"0"))
+    let chosen = c.first(db,"SELECT id,original_name,filename FROM cms_media WHERE id=?",[id])
+    let mut preview = "<span>尚未选择图片</span>"
+    if chosen != null { preview = "<img src=\"/media/" + chosen.filename + "\" alt=\"\"><span>" + c.e(chosen.original_name) + "</span>" }
+    return "<section class=\"media-picker\" data-media-picker><strong>封面 / 标识图片</strong>" + v.hidden(name,id) + "<div class=\"media-selection\" data-media-selection>" + preview + "</div><div class=\"media-picker-actions\"><button type=\"button\" data-media-open>选择或上传图片</button><button type=\"button\" data-media-clear>移除选择</button></div><p class=\"muted\" data-media-status role=\"status\">选择后随当前表单一起保存。</p><noscript>启用 JavaScript 可搜索并选择图片。</noscript></section>"
 }
 export fn listing(request, db, user) {
     let kind = c.kind(c.fallback(request.query_params.kind,"product"))
@@ -57,7 +55,7 @@ export fn editor(request, db, user) {
     let public = item.public_json != null
     let mut note = "保存为草稿后，可先预览再发布。"
     if public { note = "这条内容已发布。保存草稿不会影响官网；再次发布后才替换公开版本。发布期间 URL 标识不可修改。" }
-    let fields = v.hidden("id",item.id) + v.hidden("kind",item.kind) + v.hidden("revision",item.revision) + "<div class=\"editor-grid\"><section class=\"panel\"><h2>内容信息</h2>" + v.field("标题 *", "title",item.title,"text") + v.field("URL 标识 * · 小写字母、数字、连字符","slug",item.slug,"text") + v.area("摘要","summary",item.summary) + "<div class=\"rich-toolbar\"><span>正文格式</span><button type=\"button\" data-tag=\"strong\">加粗</button><button type=\"button\" data-tag=\"em\">斜体</button><button type=\"button\" data-tag=\"h2\">小标题</button><button type=\"button\" data-tag=\"p\">段落</button></div>" + v.area("正文 · 支持段落、标题、加粗、斜体和列表；任意脚本不会执行","body",item.body) + "</section><aside><section class=\"panel\"><h2>组织与展示</h2>" + categories(db,item.kind,item.category_id) + media_select(db,"cover_id",item.cover_id) + "<a href=\"/admin/media\" target=\"_blank\">上传图片 ↗</a></section><section class=\"panel\"><h2>搜索引擎展示</h2>" + v.field("SEO 标题（留空使用标题）","seo_title",item.seo_title,"text") + v.area("SEO 描述（留空使用摘要）","seo_description",item.seo_description) + "</section></aside></div><div class=\"save-bar\"><span>" + note + "</span><div><button class=\"button secondary\" name=\"intent\" value=\"draft\">保存草稿</button><button class=\"button\" name=\"intent\" value=\"publish\">发布到官网 ↗</button></div></div>"
+    let fields = v.hidden("id",item.id) + v.hidden("kind",item.kind) + v.hidden("revision",item.revision) + "<div class=\"editor-grid\"><section class=\"panel\"><h2>内容信息</h2>" + v.field("标题 *", "title",item.title,"text") + v.field("URL 标识 * · 小写字母、数字、连字符","slug",item.slug,"text") + v.area("摘要","summary",item.summary) + v.rich_editor(item.body) + "</section><aside><section class=\"panel\"><h2>组织与展示</h2>" + categories(db,item.kind,item.category_id) + media_select(db,"cover_id",item.cover_id) + "</section><section class=\"panel\"><h2>搜索引擎展示</h2>" + v.field("SEO 标题（留空使用标题）","seo_title",item.seo_title,"text") + v.area("SEO 描述（留空使用摘要）","seo_description",item.seo_description) + "</section></aside></div><div class=\"save-bar\"><span>" + note + "</span><div><button class=\"button secondary\" name=\"intent\" value=\"draft\">保存草稿</button><button class=\"button\" name=\"intent\" value=\"publish\">发布到官网 ↗</button></div></div>"
     let mut other = ""
     if id != 0 {
         other = "<div class=\"danger-actions\"><a href=\"/admin/preview?id=" + item.id + "\" target=\"_blank\">预览草稿 ↗</a>" + v.form("/admin/unpublish",user.csrf,v.hidden("id",item.id) + v.hidden("revision",item.revision) + "<button class=\"link-button\" data-confirm=\"确定将此内容从官网下线？\">下线</button>") + v.form("/admin/delete",user.csrf,v.hidden("id",item.id) + v.hidden("revision",item.revision) + "<button class=\"link-button danger\" data-confirm=\"确定删除此内容？此操作不可恢复。\">删除内容</button>") + "</div>"
