@@ -25,18 +25,32 @@ export fn settings_page(request,db,user) {
     let body = "<section class=\"panel narrow\"><h2>品牌与基本信息</h2>" + v.field("网站名称 *","name",s.name,"text") + v.field("品牌标语","tagline",s.tagline,"text") + v.area("网站描述 / 默认 SEO 描述","description",s.description) + content.media_select(db,"logo_id",s.logo_id) + v.field("网站地址（不含末尾斜杠）","domain",s.domain,"url") + "<h2>联系方式</h2><div class=\"form-grid\">" + v.field("电话","phone",s.phone,"text") + v.field("邮箱","email",s.email,"email") + "</div>" + v.field("地址","address",s.address,"text") + v.field("页脚文案","footer",s.footer,"text") + "<h2>导航菜单</h2><p class=\"muted\">每行：名称|站内路径。可改名、排序或移除；仅允许公开官网路径。</p>" + v.area("导航","nav",s.nav) + v.button("保存站点设置") + "</section>"
     return c.response(v.admin("站点设置",v.saved(request) + v.form("/admin/settings",user.csrf,body),user,"settings"),200)
 }
+# Browsers serialize textarea newlines as CRLF in multipart forms.
+export fn normalize_navigation(value) {
+    let nav = c.clean(value,2000) |> replace("\r\n","\n") |> replace("\r","\n")
+    let mut normalized = ""
+    let mut count = 0
+    for raw in split(nav,"\n") {
+        let line = trim(raw)
+        if line != "" {
+            let parts = split(line,"|")
+            if length(parts) != 2 { throw("导航格式应为 名称|路径") }
+            let label = c.required(parts[0],20)
+            let path = trim(parts[1])
+            if not regex_match(path,/^\/(products|cases|news|contact|page\/[a-z0-9-]+)?$/) { throw("导航只允许官网列表、联系页或 /page/页面标识") }
+            count = count + 1
+            if count > 10 { throw("导航最多 10 项") }
+            if normalized != "" { normalized = normalized + "\n" }
+            normalized = normalized + label + "|" + path
+        }
+    }
+    return normalized
+}
 export fn save_settings(db,user,f) {
     c.csrf(f,user)
     let domain = c.required(f.domain,250)
     if not regex_match(domain,/^https?:\/\/[A-Za-z0-9.-]+(:[0-9]+)?$/) { throw("网站地址格式无效") }
-    let nav = c.clean(f.nav,2000)
-    if length(split(nav,"\n")) > 10 { throw("导航最多 10 项") }
-    for line in split(nav,"\n") {
-        let parts = split(line,"|")
-        if length(parts) != 2 { throw("导航格式应为 名称|路径") }
-        c.required(parts[0],20)
-        if not regex_match(parts[1],/^\/(products|cases|news|contact|page\/[a-z0-9-]+)?$/) { throw("导航只允许官网列表、联系页或 /page/页面标识") }
-    }
+    let nav = normalize_navigation(f.nav)
     let tx = database.begin(db)
     try {
         let logo = c.integer(f.logo_id)

@@ -1,4 +1,5 @@
 import "../lib/core.hhy" as c
+import "../lib/manage.hhy" as manage
 import "../themes/default/theme.hhy" as theme
 
 fn check(condition,message) {
@@ -25,4 +26,14 @@ check(hash != c.password("test-password-for-validation","fedcba9876543210"),"pas
 check(c.random() != c.random(),"secure random token generation")
 check(theme.url("product","example") == "/products/example","theme public route")
 check(c.fallback(null,"fallback") == "fallback","missing optional values use fallback")
+
+check(manage.normalize_navigation("首页|/\r\n联系我们|/contact") == "首页|/\n联系我们|/contact","browser CRLF navigation accepted")
+check(manage.normalize_navigation(" 首页 | / \n\n 联系 | /contact \n") == "首页|/\n联系|/contact","navigation trims fields and ignores blank lines")
+check(manage.normalize_navigation("") == "","all navigation entries may be removed")
+check(not (attempt { manage.normalize_navigation("后台|/admin") }).ok,"navigation rejects admin paths")
+check(not (attempt { manage.normalize_navigation("外链|https://example.com") }).ok,"navigation rejects external URLs")
+check(not (attempt { manage.normalize_navigation("错误|/|extra") }).ok,"navigation rejects malformed entries")
+check(not (attempt { manage.normalize_navigation(" |/") }).ok,"navigation rejects empty labels")
+check(not (attempt { manage.normalize_navigation("1|/\n2|/\n3|/\n4|/\n5|/\n6|/\n7|/\n8|/\n9|/\n10|/\n11|/") }).ok,"navigation enforces ten-entry limit")
+
 print("All validation tests passed.")
