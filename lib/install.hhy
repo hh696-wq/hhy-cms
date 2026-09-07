@@ -1,0 +1,134 @@
+import database
+import "core.hhy" as c
+import "views.hhy" as v
+
+let migrations = [
+    "CREATE TABLE IF NOT EXISTS cms_state (id INT PRIMARY KEY, installation_id VARCHAR(64) NOT NULL, installed TINYINT NOT NULL DEFAULT 0)",
+    "CREATE TABLE IF NOT EXISTS cms_admins (id INT PRIMARY KEY, username VARCHAR(80) NOT NULL UNIQUE, salt VARCHAR(32) NOT NULL, password_hash VARCHAR(255) NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS cms_sessions (token_hash CHAR(64) PRIMARY KEY, admin_id INT NOT NULL, expires_at DATETIME NOT NULL, INDEX(expires_at))",
+    "CREATE TABLE IF NOT EXISTS cms_settings (name VARCHAR(80) PRIMARY KEY, value TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS cms_categories (id INT AUTO_INCREMENT PRIMARY KEY, kind VARCHAR(16) NOT NULL, name VARCHAR(100) NOT NULL, UNIQUE KEY(kind,name))",
+    "CREATE TABLE IF NOT EXISTS cms_media (id INT AUTO_INCREMENT PRIMARY KEY, filename VARCHAR(100) NOT NULL UNIQUE, original_name VARCHAR(255) NOT NULL, size INT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    "CREATE TABLE IF NOT EXISTS cms_content (id INT AUTO_INCREMENT PRIMARY KEY, kind VARCHAR(16) NOT NULL, slug VARCHAR(100) NOT NULL, title VARCHAR(200) NOT NULL, summary TEXT NOT NULL, body TEXT NOT NULL, category_id INT NULL, cover_id INT NULL, seo_title VARCHAR(200) NOT NULL DEFAULT '', seo_description VARCHAR(500) NOT NULL DEFAULT '', public_json MEDIUMTEXT NULL, public_category_id INT NULL, public_cover_id INT NULL, published_at DATETIME NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, revision INT NOT NULL DEFAULT 1, UNIQUE KEY(kind,slug), INDEX(kind,published_at,id))",
+    "CREATE TABLE IF NOT EXISTS cms_blocks (id INT AUTO_INCREMENT PRIMARY KEY, kind VARCHAR(20) NOT NULL UNIQUE, title VARCHAR(200) NOT NULL, subtitle VARCHAR(500) NOT NULL, position INT NOT NULL, visible TINYINT NOT NULL DEFAULT 1)",
+    "CREATE TABLE IF NOT EXISTS cms_audit (id INT AUTO_INCREMENT PRIMARY KEY, actor VARCHAR(80) NOT NULL, action VARCHAR(80) NOT NULL, object_id VARCHAR(100) NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    "CREATE TABLE IF NOT EXISTS cms_login_attempts (bucket CHAR(64) PRIMARY KEY, failures INT NOT NULL, expires_at DATETIME NOT NULL)"
+]
+
+fn seed(db, pending) {
+    if c.first(db, "SELECT id FROM cms_state WHERE id=1 AND installed=1", []) != null { return }
+    let tx = database.begin(db)
+    try {
+        c.exec(tx, "INSERT INTO cms_admins(id,username,salt,password_hash) VALUES (1,?,?,?)", [pending.admin, pending.salt, pending.hash])
+        for item in [{ name: "name", value: pending.name }, { name: "domain", value: pending.domain }, { name: "tagline", value: "用专业，创造值得信赖的价值。" }, { name: "description", value: "专注产品与服务，与你一起让每一个想法落地。" }, { name: "phone", value: "400-800-9100" }, { name: "email", value: "hello@example.com" }, { name: "address", value: "请在后台填写企业地址" }, { name: "footer", value: "专注品质，连接未来。" }, { name: "logo_id", value: "0" }, { name: "nav", value: "首页|/\n关于我们|/page/about\n产品中心|/products\n客户案例|/cases\n新闻资讯|/news\n联系我们|/contact" }] {
+            c.save_setting(tx, item.name, item.value)
+        }
+        for item in [{ kind: "hero", title: "让每一个想法，\n成为向前的力量。", subtitle: "我们将专业、设计与技术融为一体，为企业持续创造价值。", position: 1 }, { kind: "about", title: "与可靠的伙伴，一起走得更远。", subtitle: "以客户需求为起点，用扎实的产品与服务，回应每一份信任。", position: 2 }, { kind: "product", title: "为真实需求而设计", subtitle: "探索我们的核心产品与解决方案。", position: 3 }, { kind: "case", title: "每一次合作，都有新的可能", subtitle: "从想法到落地，看看我们与客户一起完成的事情。", position: 4 }, { kind: "news", title: "最近，正在发生", subtitle: "了解企业动态、产品进展与行业洞察。", position: 5 }, { kind: "contact", title: "下一个好想法，从一次对话开始。", subtitle: "期待了解你的需求，一起探索更多可能。", position: 6 }] {
+            c.exec(tx, "INSERT INTO cms_blocks(kind,title,subtitle,position) VALUES (?,?,?,?)", [item.kind,item.title,item.subtitle,item.position])
+        }
+        c.exec(tx, "INSERT INTO cms_categories(kind,name) VALUES ('product','核心产品'),('case','客户实践'),('news','企业动态')", [])
+        let samples = [{ kind: "page", slug: "about", title: "关于我们", summary: "长期的信任，源于每一次认真交付。", body: "<h2>以专业创造价值</h2><p>我们是一家重视产品与服务的企业。我们相信，好产品来自对真实需求的理解，好合作来自坦诚而持久的信任。</p><h2>我们如何工作</h2><p>倾听需求、专注品质、持续改进。欢迎在后台将这里替换为你的企业故事。</p>" }, { kind: "product", slug: "smart-platform", title: "智能业务平台", summary: "连接业务与数据，让团队专注更有价值的工作。", body: "<h2>让协作更进一步</h2><p>统一管理业务信息，简化日常操作，为企业提供清晰可用的工作体验。</p>" }, { kind: "product", slug: "digital-service", title: "数字化解决方案", summary: "从业务梳理到持续交付，让改变稳步发生。", body: "<p>以实际需求为中心，为企业提供可持续的数字化服务。</p>" }, { kind: "product", slug: "expert-support", title: "专业服务支持", summary: "从第一次咨询开始，陪伴每一个重要节点。", body: "<p>提供专业咨询与交付支持，帮助团队从容应对新的挑战。</p>" }, { kind: "case", slug: "connected-team", title: "让分散的团队，协同向前", summary: "为客户梳理协作流程，建立透明、稳定的信息共享方式。", body: "<h2>从问题出发</h2><p>这是一条演示案例。请在后台填写真实的客户背景、实施过程与成果。</p>" }, { kind: "case", slug: "better-experience", title: "一次面向未来的服务升级", summary: "以用户体验为线索，重新连接产品、服务与客户。", body: "<p>通过清晰的服务设计，为客户带来更顺畅的体验。</p>" }, { kind: "news", slug: "welcome", title: "你好，欢迎来到我们的新官网", summary: "一个新的窗口，一段持续向前的旅程。", body: "<p>很高兴在这里与你见面。我们将在这里分享企业动态、产品进展与更多有价值的内容。</p>" }]
+        for item in samples {
+            let snapshot = put(put(put(put(item, "cover_id", "0"), "seo_title", item.title), "seo_description", item.summary),"revision","1")
+            c.exec(tx, "INSERT INTO cms_content(kind,slug,title,summary,body,public_json,published_at) VALUES (?,?,?,?,?,?,UTC_TIMESTAMP())", [item.kind,item.slug,item.title,item.summary,item.body,encode_json(snapshot)])
+        }
+        c.exec(tx, "UPDATE cms_state SET installed=1 WHERE id=1", [])
+        c.audit(tx, pending.admin, "installation.completed", "1")
+        database.commit(tx)
+    } catch err {
+        let ignored = attempt { database.rollback(tx) }
+        throw(err)
+    }
+}
+
+fn migrate(pending) {
+    let source = put(pending.db,"max_idle",0)
+    let db = database.connection(source)
+    let locked = c.first(db, "SELECT GET_LOCK('hhy_cms_install', 0) AS acquired", [])
+    if locked.acquired != "1" { database.close(db); throw("安装正在运行，请稍后重试") }
+    try {
+        c.exec(db, "CREATE TABLE IF NOT EXISTS cms_migrations (version INT PRIMARY KEY, applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)", [])
+        let mut version = 1
+        for sql in migrations {
+            if c.first(db, "SELECT version FROM cms_migrations WHERE version=?", [version]) == null {
+                c.exec(db, sql, [])
+                c.exec(db, "INSERT INTO cms_migrations(version) VALUES (?)", [version])
+            }
+            version = version + 1
+        }
+        let state = c.first(db, "SELECT * FROM cms_state WHERE id=1", [])
+        if state != null and state.installation_id != pending.secret { throw("数据库属于另一个安装，拒绝覆盖") }
+        c.exec(db, "INSERT IGNORE INTO cms_state(id,installation_id,installed) VALUES (1,?,0)", [pending.secret])
+        seed(source, pending)
+        let ignored = c.query(db, "SELECT RELEASE_LOCK('hhy_cms_install') AS released", [])
+        database.close(db)
+    } catch err {
+        let ignored = attempt { c.query(db, "SELECT RELEASE_LOCK('hhy_cms_install') AS released", []) }
+        database.close(db)
+        throw(err)
+    }
+}
+
+export fn page(request,port) {
+    if c.ready() { return c.redirect("/admin") }
+    let mut extra = ""
+    if c.exists("install-pending.json") { extra = v.notice("检测到未完成的安装。填写安装令牌并提交即可继续；连接信息和管理员沿用首次提交，不会覆盖已有数据。") }
+    let fields = v.field("安装令牌 · 查看启动终端或 var/install-token", "token", "", "password") + "<h2>01 / 数据库连接</h2><p class=\"muted\">请先准备空 MySQL 数据库。连接密码仅存储在服务器私有配置中。</p><div class=\"form-grid\">" + v.field("主机", "host", "127.0.0.1", "text") + v.field("端口", "port", "3306", "number") + v.field("数据库名", "database", "hhy_cms", "text") + v.field("用户名", "user", "root", "text") + v.field("数据库密码", "password", "", "password") + "<label class=\"field\"><span>TLS</span><select name=\"tls\"><option value=\"required\">本机加密连接（推荐）</option><option value=\"disabled\">本机连接（不使用 TLS）</option><option value=\"verify_identity\">验证远程证书与主机名</option></select></label></div><h2>02 / 你的企业官网</h2>" + v.field("网站名称", "name", "向远科技", "text") + v.field("网站地址（包含 http:// 或 https://）", "domain", "http://127.0.0.1:" + c.str(port), "url") + "<h2>03 / 管理员</h2>" + v.field("管理员账号", "admin", "admin", "text") + v.install_password() + "<p class=\"muted\">将初始化默认主题、企业示例内容和首页区块。</p>" + v.button("创建我的企业官网 →")
+    return c.response(v.document("安装 HHY CMS", "<div class=\"setup-layout\"><aside class=\"setup-intro\"><a class=\"brand\" href=\"/\"><b class=\"mark\">H</b> HHY CMS</a><div class=\"eyebrow\">A HOME FOR YOUR BUSINESS</div><h1>你的网站。<br>从这里开始。</h1><p>安装完成，就有一套真正属于你的企业官网。</p><div class=\"setup-points\"><span>01　连接 MySQL</span><span>02　设置网站</span><span>03　开始创造</span></div><small>基于 HHY Web · 开源企业建站</small></aside><main class=\"setup-panel\"><span class=\"pill\">首次安装</span><h1>欢迎使用 HHY CMS</h1>" + extra + v.form("/install", "", fields) + "</main></div>"), 200)
+}
+
+# Keep connection diagnostics useful without exposing credentials or driver internals.
+export fn check_connection(source) {
+    let connected = attempt { database.ping(source) }
+    if connected.ok { return true }
+    let server = attempt { database.ping(put(source,"database","information_schema")) }
+    if server.ok {
+        throw("已连接到 MySQL，但数据库「" + source.database + "」不存在或当前账号没有访问权限。请先创建独立空数据库并授权，再提交安装。")
+    }
+    throw("无法连接 MySQL（" + source.host + ":" + c.str(source.port) + "）。请确认 MySQL 服务已启动、端口正确，并检查账号密码和 TLS 选项。本机 Homebrew 可执行 brew services start mysql；本机连接建议选择加密连接。")
+}
+
+export fn submit(request) {
+    if c.ready() { return v.error("站点已安装，安装入口已关闭。", 409) }
+    let f = c.fields(request).fields
+    if f.token == null or f.token != read_text(c.file("install-token")) { return v.error("安装令牌无效，请查看服务器的 var/install-token。", 403) }
+    let mut pending = null
+    if c.exists("install-pending.json") {
+        pending = c.read_json("install-pending.json")
+    } else {
+        let host = c.required(f.host, 253)
+        let port = c.integer(f.port)
+        if port < 1 or port > 65535 { throw("数据库端口无效") }
+        let endpoint = host + ":" + c.str(port)
+        # Endpoint permission comes from the deployer's environment, not the browser.
+        let allow = split(c.fallback(env.CMS_DB_ALLOW,"127.0.0.1:3306,localhost:3306"), ",")
+        if not contains(allow, endpoint) { throw("此数据库地址未授权。请在启动时通过 CMS_DB_ALLOW 指定允许连接的 host:port。") }
+        let tls = c.fallback(f.tls,"verify_identity")
+        if not contains(["disabled", "required", "verify_identity"], tls) { throw("无效 TLS 设置") }
+        if tls != "verify_identity" and host != "127.0.0.1" and host != "localhost" { throw("远程数据库必须验证 TLS") }
+        let db = { driver: "mysql", host: host, port: port, database: c.required(f.database, 64), user: c.required(f.user, 80), password: c.fallback(f.password,""), allow: allow, tls: tls, max_open: 4, max_idle: 0, timeout_ms: 30000 }
+        # The database-name validator allows underscores, unlike public URL slugs.
+        let name = c.required(f.database, 64)
+        if not regex_match(name, /^[A-Za-z0-9_]+$/) { throw("数据库名只允许字母、数字和下划线") }
+        let source = put(db, "database", name)
+        check_connection(source)
+        if length(c.query(source, "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() LIMIT 1", [])) != 0 { throw("数据库不是空库，拒绝覆盖。请准备独立的空数据库。") }
+        let domain = c.required(f.domain, 250)
+        if not regex_match(domain, /^https?:\/\/[A-Za-z0-9.-]+(:[0-9]+)?$/) { throw("网站地址需为 http(s)://主机[:端口]，不要包含路径") }
+        let actual_salt = trim(run([c.openssl, "rand", "-hex", "8"]).stdout)
+        pending = { db: source, secret: c.random(), name: c.required(f.name, 100), domain: domain, admin: c.required(f.admin, 80), salt: actual_salt, hash: "", secure_cookie: starts_with(domain, "https://") }
+        pending = put(pending, "hash", c.password(f.admin_password, pending.salt))
+        write_text(c.file("install-pending.json"), encode_json(pending), { overwrite: false })
+        run(["chmod", "600", c.data_dir + "/install-pending.json"])
+    }
+    let initialized = attempt { migrate(pending) }
+    if not initialized.ok {
+        if is_type(initialized.error,"String") { throw(initialized.error) }
+        throw("数据库初始化未完成。请确认安装账号具有该库的 SELECT、INSERT、UPDATE、DELETE、CREATE 权限，并检查数据库连接。已保存迁移进度；修正后输入同一安装令牌继续，不会清空已有内容。")
+    }
+    let saved = { db: put(pending.db,"max_idle",2), secret: pending.secret, secure_cookie: pending.secure_cookie, version: 1 }
+    write_text(c.file("config.json"), encode_json(saved, { pretty: true }), { overwrite: false })
+    run(["chmod", "600", c.data_dir + "/config.json"])
+    remove(c.file("install-pending.json"))
+    return c.redirect("/admin/login?installed=1")
+}

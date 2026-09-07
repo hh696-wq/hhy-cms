@@ -1,0 +1,24 @@
+# Local state and credentials
+/var/
+/.runtime/
+.env
+.env.*
+*.pem
+*.key
+*.log
+*.sql
+
+# Local planning and agent context
+/docs/
+AGENTS.md
+/.agents/
+/.codex/
+
+# Build/cache/output artifacts
+*.hhyc
+.DS_Store
+__pycache__/
+node_modules/
+/output/
+/dist/
+*.zip

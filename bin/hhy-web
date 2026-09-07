@@ -1,0 +1,41 @@
+#!/bin/sh
+# HHY Web launcher: application code and rendering remain entirely in HHY.
+set -eu
+root_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$root_dir"
+if [ -n "${HHY_BINARY:-}" ]; then
+    hhy_binary=$HHY_BINARY
+elif command -v hhy >/dev/null 2>&1; then
+    hhy_binary=$(command -v hhy)
+elif [ -x "$root_dir/../hhy-vm/build/hhy" ]; then
+    hhy_binary="$root_dir/../hhy-vm/build/hhy"
+else
+    echo "需要 HHY 1.5.0。请安装 hhy，或设置 HHY_BINARY。" >&2
+    exit 1
+fi
+command_name=${1:-run}
+[ "$#" -eq 0 ] || shift
+case "$command_name" in
+    run)
+        app_file=app.hhy
+        if [ "$#" -gt 0 ] && [ "${1#--}" = "$1" ]; then app_file=$1; shift; fi
+        port=${CMS_PORT:-9100}
+        dev=no
+        while [ "$#" -gt 0 ]; do
+            case "$1" in
+                --port) shift; [ "$#" -gt 0 ] || exit 2; port=$1 ;;
+                --dev) dev=yes ;;
+                *) echo "未知参数：$1" >&2; exit 2 ;;
+            esac
+            shift
+        done
+        case "$port" in ''|*[!0-9]*) echo "端口必须为整数" >&2; exit 2 ;; esac
+        [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || exit 2
+        if [ "$dev" = yes ]; then exec "$hhy_binary" serve --dev "$app_file" -- "$port"; fi
+        exec "$hhy_binary" serve "$app_file" -- "$port"
+        ;;
+    check) exec "$hhy_binary" check "${1:-app.hhy}" ;;
+    test) exec "$hhy_binary" tests/validation.hhy ;;
+    version) exec "$hhy_binary" --version ;;
+    *) echo "用法：./bin/hhy-web run [app.hhy|install.hhy] [--port 9100] [--dev] | check | test | version" >&2; exit 2 ;;
+esac

@@ -1,0 +1,28 @@
+import "../lib/core.hhy" as c
+import "../themes/default/theme.hhy" as theme
+
+fn check(condition,message) {
+    if not condition { throw(message) }
+    print("PASS " + message)
+}
+check(c.e("<script>\"&") == "&lt;script&gt;&quot;&amp;","HTML output escapes special characters")
+check(c.rich("<strong>safe</strong><script>bad</script>") == "<strong>safe</strong>&lt;script&gt;bad&lt;/script&gt;","rich text only allows exact presentation tags")
+check(not contains(c.rich("<p onclick=\"bad()\">text</p>"),"<p onclick"),"rich text rejects event attributes")
+check(not contains(c.rich("<img src=x onerror=bad()>"),"<img"),"rich text rejects arbitrary images and handlers")
+check(not (attempt { c.slug("../escape") }).ok,"URL path traversal rejected")
+check(not (attempt { c.slug("Upper_Case") }).ok,"invalid public slug rejected")
+check(c.slug("valid-123") == "valid-123","valid public slug accepted")
+check(not (attempt { c.integer("1 OR 1=1") }).ok,"invalid numeric identifier rejected")
+check(not (attempt { c.kind("admin") }).ok,"unknown content type rejected")
+check(not (attempt { c.required("  ",10) }).ok,"empty required field rejected")
+check(not (attempt { c.clean("abcdef",3) }).ok,"oversized field rejected")
+check(not (attempt { c.csrf({csrf:"wrong"},{csrf:"expected"}) }).ok,"CSRF mismatch rejected")
+check(c.csrf({csrf:"same"},{csrf:"same"}).csrf == "same","valid CSRF accepted")
+check(not (attempt { c.password("short","0123456789abcdef") }).ok,"short password rejected")
+let hash = c.password("test-password-for-validation","0123456789abcdef")
+check(hash == c.password("test-password-for-validation","0123456789abcdef"),"password hash is reproducible for verification")
+check(hash != c.password("test-password-for-validation","fedcba9876543210"),"password hash uses unique salt")
+check(c.random() != c.random(),"secure random token generation")
+check(theme.url("product","example") == "/products/example","theme public route")
+check(c.fallback(null,"fallback") == "fallback","missing optional values use fallback")
+print("All validation tests passed.")

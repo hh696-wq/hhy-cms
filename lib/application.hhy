@@ -1,0 +1,69 @@
+import "../vendor/hhy-web/hhyweb.hhy" as hhyweb
+import "core.hhy" as c
+import "views.hhy" as v
+import "install.hhy" as installer
+import "auth.hhy" as auth
+import "site.hhy" as site
+import "content.hhy" as content
+import "manage.hhy" as manage
+
+fn dispatch(request,port) {
+    if request.path == "/install" {
+        if request.method == "POST" { return installer.submit(request) }
+        return installer.page(request,port)
+    }
+    if request.path == "/admin/login" {
+        if request.method == "POST" { return auth.login(request) }
+        return auth.login_page(request)
+    }
+    if starts_with(request.path,"/admin") {
+        if not c.ready() { return c.redirect("/install") }
+        let cfg = c.config()
+        let user = c.session(request,cfg)
+        if user == null { return c.redirect("/admin/login") }
+        if request.method == "GET" {
+            if request.path == "/admin" { return manage.dashboard(cfg.db,user) }
+            if request.path == "/admin/content" { return content.listing(request,cfg.db,user) }
+            if request.path == "/admin/edit" { return content.editor(request,cfg.db,user) }
+            if request.path == "/admin/preview" { return content.preview(request,cfg.db,user) }
+            if request.path == "/admin/settings" { return manage.settings_page(request,cfg.db,user) }
+            if request.path == "/admin/home" { return manage.blocks_page(request,cfg.db,user) }
+            if request.path == "/admin/categories" { return manage.categories_page(request,cfg.db,user) }
+            if request.path == "/admin/media" { return manage.media_page(request,cfg.db,user) }
+        } else {
+            let parsed = c.fields(request)
+            let f = parsed.fields
+            if f.csrf != user.csrf { return v.error("表单校验失败，请刷新页面后重试。",403) }
+            if request.path == "/admin/logout" { return auth.logout(request,user,f) }
+            if request.path == "/admin/save" { return content.save(cfg.db,user,f) }
+            if request.path == "/admin/unpublish" { return content.remove_content(cfg.db,user,f,true) }
+            if request.path == "/admin/delete" { return content.remove_content(cfg.db,user,f,false) }
+            if request.path == "/admin/settings" { return manage.save_settings(cfg.db,user,f) }
+            if request.path == "/admin/home" { return manage.save_block(cfg.db,user,f) }
+            if request.path == "/admin/categories" { return manage.save_category(cfg.db,user,f) }
+            if request.path == "/admin/media" { return manage.upload(cfg.db,user,parsed) }
+            if request.path == "/admin/media/delete" { return manage.delete_media(cfg.db,user,f) }
+        }
+        return v.error("页面不存在",404)
+    }
+    if request.path == "/sitemap.xml" { return site.sitemap(request) }
+    return site.handle(request)
+}
+fn handler(request,port) {
+    let result = attempt { dispatch(request,port) }
+    if result.ok { return result.value }
+    # Expose only our own validation messages; extension and database errors stay private.
+    if is_type(result.error,"String") { return v.error(result.error,400) }
+    print_error("CMS request failed: " + (c.fallback(result.error.code,c.fallback(result.error.kind,"unknown"))))
+    return v.error("操作未完成。请检查数据库连接、字段是否重复及目录权限后重试；安装中断可再次提交继续。",500)
+}
+export fn start(port) {
+    c.boot()
+    fn route_handler(request) { return handler(request,port) }
+    print("HHY CMS · http://127.0.0.1:" + c.str(port))
+    if not c.ready() { print("尚未安装：打开 /install。安装令牌保存在 " + c.data_dir + "/install-token") }
+    let mut app = hhyweb.minimal() |> hhyweb.static_files("/assets",path("public")) |> hhyweb.static_files("/media",c.file("uploads"))
+    for route in ["/", "/install", "/admin/login", "/admin", "/admin/content", "/admin/edit", "/admin/preview", "/admin/settings", "/admin/home", "/admin/categories", "/admin/media", "/products", "/cases", "/news", "/contact", "/products/:slug", "/cases/:slug", "/news/:slug", "/page/:slug", "/sitemap.xml"] { app = app |> hhyweb.get(route,route_handler) }
+    for route in ["/install", "/admin/login", "/admin/logout", "/admin/save", "/admin/unpublish", "/admin/delete", "/admin/settings", "/admin/home", "/admin/categories", "/admin/media", "/admin/media/delete"] { app = app |> hhyweb.post(route,route_handler) }
+    return app |> hhyweb.serve({ host:c.fallback(env.CMS_HOST,"127.0.0.1"), port:port, workers:to_int(c.fallback(env.CMS_WORKERS,"2")), max_body:3145728 })
+}

@@ -1,0 +1,165 @@
+import web
+
+export let version = "0.1.0"
+
+# Create a production-oriented HHY Web application. Every option is explicit;
+# missing Map fields evaluate to null in HHY.
+export fn app(config) {
+    let mut application = web.app()
+    application = web.request_id(application)
+
+    if config.cors != null {
+        application = web.cors(application, config.cors)
+    }
+    if config.gzip == true {
+        application = web.gzip(application)
+    }
+    if config.health != null {
+        application = web.health(application, config.health)
+    }
+    if config.metrics != null {
+        application = web.metrics(application, config.metrics)
+    }
+    if config.trust_proxy == true {
+        application = web.trust_proxy(application)
+    }
+
+    return application
+}
+
+export fn minimal() {
+    return web.app() |> web.request_id
+}
+
+export fn use(application, middleware) {
+    return web.use(application, middleware)
+}
+
+export fn get(application, route, handler) {
+    return web.get(application, route, handler)
+}
+
+export fn post(application, route, handler) {
+    return web.post(application, route, handler)
+}
+
+export fn put(application, route, handler) {
+    return web.put(application, route, handler)
+}
+
+export fn patch(application, route, handler) {
+    return web.patch(application, route, handler)
+}
+
+export fn delete(application, route, handler) {
+    return web.delete(application, route, handler)
+}
+
+export fn static_files(application, route, root) {
+    return web.static(application, route, root)
+}
+
+# A blueprint is simply a function WebApp -> WebApp. This keeps composition
+# inside HHY's normal function and Flow model.
+export fn mount(application, blueprint) {
+    return blueprint(application)
+}
+
+export fn serve(application, config) {
+    return web.listen(application, config)
+}
+
+export fn json(value) {
+    return web.json(value)
+}
+
+export fn json_with(value, options) {
+    return web.json(value, options)
+}
+
+export fn text(value) {
+    return web.text(value)
+}
+
+export fn html(value) {
+    return web.html(value)
+}
+
+export fn redirect(location) {
+    return web.redirect(location)
+}
+
+export fn created(value) {
+    return web.json(value, { status: 201 })
+}
+
+export fn accepted(value) {
+    return web.json(value, { status: 202 })
+}
+
+export fn no_content() {
+    return web.response({ status: 204, body: "" })
+}
+
+export fn problem(status, code, message) {
+    return web.json({
+            error: {
+                code: code,
+                message: message
+            }
+        }, { status: status })
+}
+
+export fn request_json(request) {
+    let result = attempt { request.body |> parse_json }
+    if result.ok {
+        return { ok: true, value: result.value, error: null }
+    }
+    return {
+        ok: false,
+        value: null,
+        error: problem(400, "invalid_json", "Request body must be valid JSON")
+    }
+}
+
+export fn bearer(token) {
+    fn authenticate(request) {
+        if request.headers.authorization != "Bearer " + token {
+            return problem(401, "unauthorized", "A valid bearer token is required")
+        }
+        return null
+    }
+
+    return authenticate
+}
+
+export fn require_header(name, expected) {
+    fn validate(request) {
+        if request.headers[name] != expected {
+            return problem(400, "missing_header", "A required request header is missing or invalid")
+        }
+        return null
+    }
+
+    return validate
+}
+
+export fn streaming(items, options) {
+    return items |> stream |> web.stream(options)
+}
+
+export fn sse(items) {
+    return items |> stream |> web.sse
+}
+
+export fn upload(request, directory) {
+    return web.multipart(request, directory)
+}
+
+export fn sign_cookie(value, secret) {
+    return web.sign_cookie(value, secret)
+}
+
+export fn verify_cookie(value, secret) {
+    return web.verify_cookie(value, secret)
+}

@@ -1,0 +1,44 @@
+import web
+import "core.hhy" as c
+import "views.hhy" as v
+
+export fn login_page(request) {
+    if not c.ready() { return c.redirect("/install") }
+    let token = c.random()
+    let signed = web.sign_cookie(token, c.config().secret)
+    let mut message = ""
+    if request.query_params.installed == "1" { message = v.notice("安装完成！登录后台，开始管理你的官网。") }
+    let body = v.document("登录 · HHY CMS", "<main class=\"login-layout\"><section class=\"login-story\"><a class=\"brand\" href=\"/\"><b class=\"mark\">H</b> HHY CMS</a><div><span class=\"eyebrow\">MAKE YOURSELF AT HOME</span><h1>好内容，<br>让品牌被看见。</h1><p>管理你的网站，分享你的下一步。</p></div><small>由 HHY Web 驱动</small></section><section class=\"login-form\"><span class=\"pill\">管理员入口</span><h1>欢迎回来</h1><p class=\"muted\">登录以管理企业官网的内容与设置。</p>" + message + v.form("/admin/login", token, v.field("账号", "username", "", "text") + v.field("密码", "password", "", "password") + v.button("登录后台 →")) + "<a class=\"back-link\" href=\"/\">← 返回官网</a></section></main>")
+    return web.html(body, { headers: put(c.headers(), "Set-Cookie", c.cookie("hhy_login", signed, 600)) })
+}
+export fn login(request) {
+    if not c.ready() { return c.redirect("/install") }
+    let cfg = c.config()
+    let f = c.fields(request).fields
+    let token = web.verify_cookie(c.fallback(request.cookies.hhy_login,""), cfg.secret)
+    if token == null or f.csrf != token { return v.error("登录表单已过期，请重新打开登录页。",403) }
+    let bucket = c.digest(request.remote_addr, cfg.secret)
+    c.exec(cfg.db, "DELETE FROM cms_login_attempts WHERE expires_at<UTC_TIMESTAMP()", [])
+    c.exec(cfg.db, "INSERT INTO cms_login_attempts(bucket,failures,expires_at) VALUES (?,1,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 15 MINUTE)) ON DUPLICATE KEY UPDATE failures=failures+1", [bucket])
+    let tries = c.first(cfg.db,"SELECT failures FROM cms_login_attempts WHERE bucket=?",[bucket])
+    if to_int(tries.failures) > 10 { return v.error("登录尝试过多，请 15 分钟后重试。",429) }
+    let user = c.first(cfg.db,"SELECT * FROM cms_admins WHERE username=?",[c.clean(f.username,80)])
+    let mut salt = "0123456789abcdef"
+    if user != null { salt = user.salt }
+    let checked = attempt { c.password(f.password, salt) }
+    if user == null or not checked.ok { return v.error("账号或密码不正确。",401) }
+    # Use the runtime's constant-time HMAC verifier for comparing derived hashes.
+    let signed = web.sign_cookie("password-check", user.password_hash)
+    if web.verify_cookie(signed, checked.value) == null { return v.error("账号或密码不正确。",401) }
+    let session = c.random()
+    c.exec(cfg.db,"DELETE FROM cms_sessions WHERE expires_at<UTC_TIMESTAMP()",[])
+    c.exec(cfg.db,"INSERT INTO cms_sessions(token_hash,admin_id,expires_at) VALUES (?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR))",[c.digest(session,cfg.secret),user.id])
+    c.exec(cfg.db,"DELETE FROM cms_login_attempts WHERE bucket=?",[bucket])
+    c.audit(cfg.db,user.username,"auth.login",user.id)
+    return web.response({ status: 303, headers: put(put(c.headers(),"Location","/admin"),"Set-Cookie",c.cookie("hhy_session",session,28800)), body: "" })
+}
+export fn logout(request, user, fields) {
+    c.csrf(fields,user)
+    c.exec(c.config().db,"DELETE FROM cms_sessions WHERE token_hash=?",[user.token_hash])
+    return web.response({status:303,headers:put(put(c.headers(),"Location","/admin/login"),"Set-Cookie",c.cookie("hhy_session","",0)),body:""})
+}

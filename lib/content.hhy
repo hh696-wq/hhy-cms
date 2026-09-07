@@ -1,0 +1,133 @@
+import database
+import "core.hhy" as c
+import "views.hhy" as v
+import "site.hhy" as site
+
+fn categories(db, kind, selected) {
+    let mut options = v.option("0","未分类",selected)
+    for row in c.query(db,"SELECT * FROM cms_categories WHERE kind=? ORDER BY id LIMIT 200",[kind]) { options = options + v.option(row.id,row.name,selected) }
+    return "<label class=\"field\"><span>分类</span><select name=\"category_id\">" + options + "</select></label>"
+}
+export fn media_select(db, name, selected) {
+    let mut options = v.option("0","不使用图片",selected)
+    if selected != null and c.str(selected) != "0" and c.str(selected) != "" {
+        let chosen = c.first(db,"SELECT id,original_name FROM cms_media WHERE id=?",[selected])
+        if chosen != null { options = options + v.option(chosen.id,"当前：" + chosen.original_name,selected) }
+    }
+    for row in c.query(db,"SELECT id,original_name FROM cms_media ORDER BY id DESC LIMIT 200",[]) { options = options + v.option(row.id,row.original_name + " (#" + row.id + ")",selected) }
+    return "<label class=\"field\"><span>封面 / 标识图片（媒体库最近 200 张）</span><select name=\"" + name + "\">" + options + "</select></label>"
+}
+export fn listing(request, db, user) {
+    let kind = c.kind(c.fallback(request.query_params.kind,"product"))
+    let q = c.clean(request.query_params.q,100)
+    let page = c.integer(c.fallback(request.query_params.page,"1"))
+    if page < 1 or page > 10000 { throw("页码无效") }
+    let state = c.fallback(request.query_params.state,"all")
+    if not contains(["all","published","draft"],state) { throw("状态无效") }
+    let pattern = "%" + q + "%"
+    let rows = c.query(db,"SELECT id,kind,slug,title,public_json,revision,updated_at FROM cms_content WHERE kind=? AND title LIKE ? AND (?='all' OR (?='published' AND public_json IS NOT NULL) OR (?='draft' AND public_json IS NULL)) ORDER BY id DESC LIMIT 20 OFFSET ?",[kind,pattern,state,state,state,(page-1)*20])
+    let mut table = "<div class=\"table-wrap\"><table><thead><tr><th>标题 / URL</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>"
+    for row in rows {
+        let mut status = "草稿 / 已下线"
+        let mut actions = ""
+        if row.public_json != null {
+            status = "已发布"
+            if (c.fallback(parse_json(row.public_json).revision,"0")) != row.revision { status = "已发布 · 有新草稿" }
+            actions = "<a href=\"" + site.url(kind,row.slug) + "\" target=\"_blank\">官网 ↗</a>"
+        }
+        table = table + "<tr><td><strong>" + c.e(row.title) + "</strong><small>/" + c.e(row.slug) + "</small></td><td><span class=\"status\">" + status + "</span></td><td>" + c.e(row.updated_at) + "</td><td class=\"actions\"><a href=\"/admin/edit?id=" + row.id + "\">编辑</a><a href=\"/admin/preview?id=" + row.id + "\" target=\"_blank\">预览</a>" + actions + "</td></tr>"
+    }
+    table = table + "</tbody></table></div>"
+    if length(rows) == 0 { table = "<div class=\"empty\"><h3>这里还没有内容</h3><p>从一条新的" + v.label(kind) + "开始。</p></div>" }
+    let mut previous = page-1
+    if previous < 1 { previous = 1 }
+    # GET forms preserve search/filter values without constructing unescaped query URLs.
+    let filters = "<form class=\"filters\" method=\"get\">" + v.hidden("kind",kind) + "<input name=\"q\" placeholder=\"搜索标题\" value=\"" + c.e(q) + "\"><select name=\"state\">" + v.option("all","全部状态",state) + v.option("published","已发布",state) + v.option("draft","草稿 / 下线",state) + "</select><button>筛选</button></form>"
+    let pager = "<form class=\"pagination\" method=\"get\">" + v.hidden("kind",kind) + v.hidden("q",q) + v.hidden("state",state) + "<button name=\"page\" value=\"" + c.str(previous) + "\">← 上一页</button><span>第 " + c.str(page) + " 页</span><button name=\"page\" value=\"" + c.str(page+1) + "\">下一页 →</button></form>"
+    let body = "<div class=\"toolbar\"><p class=\"muted\">管理你的" + v.label(kind) + "，让每一次更新有条不紊。</p><a class=\"button\" href=\"/admin/edit?kind=" + kind + "\">＋ 新建" + v.label(kind) + "</a></div>" + filters + "<section class=\"panel\">" + table + "</section>" + pager
+    return c.response(v.admin(v.label(kind) + "管理",body,user,kind),200)
+}
+export fn editor(request, db, user) {
+    let id = c.integer(c.fallback(request.query_params.id,"0"))
+    let mut item = { id: "0", kind: c.kind(c.fallback(request.query_params.kind,"product")), title: "", slug: "", summary: "", body: "", category_id: "0", cover_id: "0", seo_title: "", seo_description: "", revision: "0" }
+    if id != 0 {
+        item = c.first(db,"SELECT * FROM cms_content WHERE id=?",[id])
+        if item == null { return v.error("内容不存在",404) }
+    }
+    let public = item.public_json != null
+    let mut note = "保存为草稿后，可先预览再发布。"
+    if public { note = "这条内容已发布。保存草稿不会影响官网；再次发布后才替换公开版本。发布期间 URL 标识不可修改。" }
+    let fields = v.hidden("id",item.id) + v.hidden("kind",item.kind) + v.hidden("revision",item.revision) + "<div class=\"editor-grid\"><section class=\"panel\"><h2>内容信息</h2>" + v.field("标题 *", "title",item.title,"text") + v.field("URL 标识 * · 小写字母、数字、连字符","slug",item.slug,"text") + v.area("摘要","summary",item.summary) + "<div class=\"rich-toolbar\"><span>正文格式</span><button type=\"button\" data-tag=\"strong\">加粗</button><button type=\"button\" data-tag=\"em\">斜体</button><button type=\"button\" data-tag=\"h2\">小标题</button><button type=\"button\" data-tag=\"p\">段落</button></div>" + v.area("正文 · 支持段落、标题、加粗、斜体和列表；任意脚本不会执行","body",item.body) + "</section><aside><section class=\"panel\"><h2>组织与展示</h2>" + categories(db,item.kind,item.category_id) + media_select(db,"cover_id",item.cover_id) + "<a href=\"/admin/media\" target=\"_blank\">上传图片 ↗</a></section><section class=\"panel\"><h2>搜索引擎展示</h2>" + v.field("SEO 标题（留空使用标题）","seo_title",item.seo_title,"text") + v.area("SEO 描述（留空使用摘要）","seo_description",item.seo_description) + "</section></aside></div><div class=\"save-bar\"><span>" + note + "</span><div><button class=\"button secondary\" name=\"intent\" value=\"draft\">保存草稿</button><button class=\"button\" name=\"intent\" value=\"publish\">发布到官网 ↗</button></div></div>"
+    let mut other = ""
+    if id != 0 {
+        other = "<div class=\"danger-actions\"><a href=\"/admin/preview?id=" + item.id + "\" target=\"_blank\">预览草稿 ↗</a>" + v.form("/admin/unpublish",user.csrf,v.hidden("id",item.id) + v.hidden("revision",item.revision) + "<button class=\"link-button\" data-confirm=\"确定将此内容从官网下线？\">下线</button>") + v.form("/admin/delete",user.csrf,v.hidden("id",item.id) + v.hidden("revision",item.revision) + "<button class=\"link-button danger\" data-confirm=\"确定删除此内容？此操作不可恢复。\">删除内容</button>") + "</div>"
+    }
+    return c.response(v.admin("编辑" + v.label(item.kind),v.saved(request) + v.form("/admin/save",user.csrf,fields) + other,user,item.kind),200)
+}
+fn validated(f) {
+    let kind = c.kind(f.kind)
+    let title = c.required(f.title,200)
+    let summary = c.clean(f.summary,1500)
+    let seo_title = c.clean(f.seo_title,200)
+    let seo_description = c.clean(f.seo_description,500)
+    let mut item = { kind:kind, slug:c.slug(f.slug), title:title, summary:summary, body:c.clean(f.body,16000), category_id:c.integer(c.fallback(f.category_id,"0")), cover_id:c.integer(c.fallback(f.cover_id,"0")), seo_title:seo_title, seo_description:seo_description }
+    if seo_title == "" { item = put(item,"seo_title",title) }
+    if byte_length(encode_json(item)) > 60000 { throw("内容过长，请将正文拆分到多个页面") }
+    return item
+}
+export fn save(db, user, f) {
+    let item = f |> c.csrf(user) |> validated
+    let id = c.integer(f.id)
+    let revision = c.integer(f.revision)
+    if not contains(["draft","publish"],f.intent) { throw("无效发布操作") }
+    let tx = database.begin(db)
+    let mut saved_id = id
+    try {
+        let current = c.first(tx,"SELECT * FROM cms_content WHERE id=? FOR UPDATE",[id])
+        if id != 0 and current == null { throw("内容不存在") }
+        if current != null and (to_int(current.revision) != revision or current.kind != item.kind) { throw("内容已被其他操作修改，请重新打开编辑页") }
+        if current != null and (current.public_json != null or (current.kind == "page" and current.slug == "about")) and current.slug != item.slug { throw("已发布内容不能修改 URL，请先下线") }
+        if item.category_id != 0 and c.first(tx,"SELECT id FROM cms_categories WHERE id=? AND kind=? FOR UPDATE",[item.category_id,item.kind]) == null { throw("分类不存在或类型不匹配") }
+        if item.cover_id != 0 and c.first(tx,"SELECT id FROM cms_media WHERE id=? FOR UPDATE",[item.cover_id]) == null { throw("所选图片不存在") }
+        if id == 0 {
+            let result = c.exec(tx,"INSERT INTO cms_content(kind,slug,title,summary,body,category_id,cover_id,seo_title,seo_description) VALUES (?,?,?,?,?,NULLIF(?,0),NULLIF(?,0),?,?)",[item.kind,item.slug,item.title,item.summary,item.body,item.category_id,item.cover_id,item.seo_title,item.seo_description])
+            saved_id = to_int(result.last_insert_id)
+        } else {
+            c.exec(tx,"UPDATE cms_content SET slug=?,title=?,summary=?,body=?,category_id=NULLIF(?,0),cover_id=NULLIF(?,0),seo_title=?,seo_description=?,revision=revision+1,updated_at=UTC_TIMESTAMP() WHERE id=?",[item.slug,item.title,item.summary,item.body,item.category_id,item.cover_id,item.seo_title,item.seo_description,id])
+        }
+        if f.intent == "publish" {
+            let snapshot = put(item,"revision",c.str(revision+1))
+            c.exec(tx,"UPDATE cms_content SET public_json=?,public_category_id=NULLIF(?,0),public_cover_id=NULLIF(?,0),published_at=UTC_TIMESTAMP() WHERE id=?",[encode_json(snapshot),item.category_id,item.cover_id,saved_id])
+        }
+        c.audit(tx,user.username,"content." + f.intent,c.str(saved_id))
+        database.commit(tx)
+    } catch err {
+        let ignored = attempt { database.rollback(tx) }
+        throw(err)
+    }
+    return c.redirect("/admin/edit?id=" + c.str(saved_id) + "&saved=1")
+}
+export fn remove_content(db,user,f,unpublish) {
+    c.csrf(f,user)
+    let id = c.integer(f.id)
+    let tx = database.begin(db)
+    try {
+        let row = c.first(tx,"SELECT revision,kind,slug FROM cms_content WHERE id=? FOR UPDATE",[id])
+        if row == null or to_int(row.revision) != c.integer(f.revision) { throw("内容已变化，请刷新后再操作") }
+        if row.kind == "page" and row.slug == "about" { throw("关于我们是默认官网必需页面，请编辑其内容") }
+        if unpublish {
+            c.exec(tx,"UPDATE cms_content SET public_json=NULL,public_category_id=NULL,public_cover_id=NULL,published_at=NULL,revision=revision+1 WHERE id=?",[id])
+        } else { c.exec(tx,"DELETE FROM cms_content WHERE id=?",[id]) }
+        c.audit(tx,user.username,"content.remove-or-unpublish",c.str(id))
+        database.commit(tx)
+        return c.redirect("/admin/content?kind=" + row.kind)
+    } catch err {
+        let ignored = attempt { database.rollback(tx) }
+        throw(err)
+    }
+}
+export fn preview(request,db,user) {
+    let item = c.first(db,"SELECT * FROM cms_content WHERE id=?",[c.integer(request.query_params.id)])
+    if item == null { return v.error("内容不存在",404) }
+    return c.response(site.detail(db,c.settings(db),item,true),200)
+}

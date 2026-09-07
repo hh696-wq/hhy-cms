@@ -1,0 +1,42 @@
+import "core.hhy" as c
+
+export fn document(title, content) {
+    return "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>" + c.e(title) + "</title><link rel=\"stylesheet\" href=\"/assets/style.css\"><script src=\"/assets/editor.js\" defer></script></head><body>" + content + "</body></html>"
+}
+export fn field(label, name, value, type) {
+    return "<label class=\"field\"><span>" + c.e(label) + "</span><input type=\"" + type + "\" name=\"" + name + "\" value=\"" + c.e(value) + "\"></label>"
+}
+export fn area(label, name, value) {
+    return "<label class=\"field\"><span>" + c.e(label) + "</span><textarea name=\"" + name + "\" rows=\"8\">" + c.e(value) + "</textarea></label>"
+}
+export fn hidden(name, value) { return "<input type=\"hidden\" name=\"" + name + "\" value=\"" + c.e(value) + "\">" }
+export fn form(action, csrf, content) { return "<form method=\"post\" enctype=\"multipart/form-data\" action=\"" + action + "\">" + hidden("csrf", csrf) + content + "</form>" }
+export fn button(text) { return "<button class=\"button\" type=\"submit\">" + text + "</button>" }
+export fn option(value, label, selected) {
+    let mut extra = ""
+    if c.str(value) == c.str(c.fallback(selected,"")) { extra = " selected" }
+    return "<option value=\"" + c.e(value) + "\"" + extra + ">" + c.e(label) + "</option>"
+}
+export fn notice(message) {
+    if message == null or message == "" { return "" }
+    return "<div class=\"notice\" role=\"status\">" + c.e(message) + "</div>"
+}
+export fn saved(request) {
+    if request.query_params.saved == "1" { return notice("修改已保存。") }
+    return ""
+}
+export fn label(kind) { return c.fallback({ product: "产品", news: "新闻", case: "案例", page: "页面" }[kind],"内容") }
+export fn admin(title, body, user, active) {
+    let mut nav = ""
+    for item in [{ url: "/admin", title: "工作台", key: "home" }, { url: "/admin/content?kind=product", title: "产品中心", key: "product" }, { url: "/admin/content?kind=case", title: "客户案例", key: "case" }, { url: "/admin/content?kind=news", title: "新闻资讯", key: "news" }, { url: "/admin/content?kind=page", title: "独立页面", key: "page" }, { url: "/admin/categories", title: "内容分类", key: "categories" }, { url: "/admin/home", title: "首页区块", key: "blocks" }, { url: "/admin/media", title: "媒体库", key: "media" }, { url: "/admin/settings", title: "站点设置", key: "settings" }] {
+        let mut cls = ""
+        if active == item.key { cls = "active" }
+        nav = nav + "<a class=\"" + cls + "\" href=\"" + item.url + "\">" + item.title + "</a>"
+    }
+    return document(title + " · HHY CMS", "<div class=\"admin-shell\"><aside class=\"sidebar\"><a class=\"brand\" href=\"/admin\"><b class=\"mark\">H</b> HHY <span>CMS</span></a><div class=\"side-label\">网站管理</div><nav>" + nav + "</nav><div class=\"side-bottom\"><a href=\"/\" target=\"_blank\">查看官网 ↗</a><small>HHY 驱动 · 内容由你掌控</small></div></aside><main class=\"admin-main\"><header class=\"admin-header\"><span>企业内容管理</span><div>" + c.e(user.username) + form("/admin/logout", user.csrf, "<button class=\"link-button\">退出</button>") + "</div></header><div class=\"workspace\"><div class=\"page-heading\"><div><div class=\"eyebrow\">YOUR WEBSITE, IN YOUR HANDS</div><h1>" + c.e(title) + "</h1></div><span class=\"pill\">HHY CMS / 0.1</span></div>" + body + "</div></main></div>")
+}
+export fn error(message, status) { return c.response(document("操作未完成", "<main class=\"setup-card\"><div class=\"eyebrow\">HHY CMS</div><h1>操作未完成</h1>" + notice(message) + "<p><a href=\"/admin\">返回后台</a> · <a href=\"/install\">返回安装向导</a></p></main>"), status) }
+
+export fn install_password() {
+    return "<div class=\"field password-field\"><div class=\"password-label\"><label for=\"admin-password\">管理员密码（至少 12 个字符）</label><button type=\"button\" class=\"link-button\" data-password-generate aria-controls=\"admin-password\">帮我生成</button></div><div class=\"password-input-row\"><input id=\"admin-password\" type=\"password\" name=\"admin_password\" autocomplete=\"new-password\" minlength=\"12\" maxlength=\"128\" required aria-describedby=\"password-status\"><button type=\"button\" class=\"password-control\" data-password-toggle aria-controls=\"admin-password\" aria-pressed=\"false\">显示</button><button type=\"button\" class=\"password-control\" data-password-copy>复制</button></div><small id=\"password-status\" class=\"password-status\" role=\"status\" aria-live=\"polite\">可手动输入，也可生成 20 位随机密码。</small></div>"
+}

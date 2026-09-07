@@ -1,0 +1,8 @@
+import "lib/core.hhy" as c
+import "lib/application.hhy" as cms
+
+fn configured_port() {
+    if length(args) > 0 { return to_int(args[0]) }
+    return to_int(c.fallback(env.CMS_PORT,"9100"))
+}
+cms.start(configured_port())

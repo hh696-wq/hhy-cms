@@ -1,0 +1,130 @@
+import web
+import database
+
+export fn fallback(value, other) {
+    if value == null { return other }
+    return value
+}
+export fn str(value) {
+    if is_type(value, "String") { return value }
+    return encode_json(value)
+}
+export let data_dir = fallback(env.CMS_DATA_DIR,"var")
+export let openssl = fallback(env.CMS_OPENSSL,"openssl")
+export fn file(name) { return path(data_dir + "/" + name) }
+export fn read_json(name) { return read_text(file(name)) |> parse_json }
+export fn exists(name) { return (attempt { read_text(file(name)) }).ok }
+export fn random() {
+    let result = run([openssl, "rand", "-hex", "32"], { timeout: 5s })
+    if result.exit_code != 0 { throw("安全随机数生成失败，请安装 OpenSSL 3") }
+    return trim(result.stdout)
+}
+export fn boot() {
+    let driver = attempt { database.capabilities() }
+    if not driver.ok or driver.value.version != "1.0.0" { throw("请先安装 HHY 1.5.0 和 database 1.0.0 扩展，详见 README.md") }
+    let crypto = run([openssl,"version"],{timeout:5s})
+    if crypto.exit_code != 0 or not starts_with(crypto.stdout,"OpenSSL 3.") { throw("需要 OpenSSL 3，可通过 CMS_OPENSSL 指定可执行文件") }
+    for directory in ["tmp", "uploads"] {
+        write_text(file(directory + "/.keep"), "", { create_parents: true })
+    }
+    if not exists("install-token") {
+        let result = attempt { write_text(file("install-token"), random(), { overwrite: false, create_parents: true }) }
+        if not result.ok and not exists("install-token") { throw("无法创建安装令牌") }
+    }
+    run(["chmod", "700", data_dir], { timeout: 5s })
+    run(["chmod", "600", data_dir + "/install-token"], { timeout: 5s })
+}
+export fn config() { return read_json("config.json") }
+export fn ready() { return exists("config.json") }
+export fn query(db, sql, params) {
+    let result = database.query(db, sql, params)
+    if result.truncated { return database.stream(db, sql, params) |> collect }
+    return result.rows
+}
+export fn first(db, sql, params) {
+    let rows = query(db, sql, params)
+    if length(rows) == 0 { return null }
+    return rows[0]
+}
+export fn exec(db, sql, params) { return database.execute(db, sql, params) }
+export fn digest(value, secret) { return split(web.sign_cookie(value, secret), ".")[1] }
+export fn e(value) {
+    return str(fallback(value,"")) |> replace("&", "&amp;") |> replace("<", "&lt;") |> replace(">", "&gt;") |> replace("\"", "&quot;") |> replace("'", "&#39;")
+}
+# Escape first, then allow exact attribute-free presentation tags only.
+export fn rich(value) {
+    let mut out = e(value)
+    for tag in ["p", "strong", "em", "ul", "ol", "li", "h2", "h3", "blockquote", "br"] {
+        out = replace(out, "&lt;" + tag + "&gt;", "<" + tag + ">")
+        out = replace(out, "&lt;/" + tag + "&gt;", "</" + tag + ">")
+    }
+    return out
+}
+export fn clean(value, max) {
+    let v = trim(fallback(value,""))
+    if length(v) > max or contains(v, "\0") { throw("字段长度超过限制或包含非法字符") }
+    return v
+}
+export fn required(value, max) {
+    let v = clean(value, max)
+    if v == "" { throw("请填写必填字段") }
+    return v
+}
+export fn slug(value) {
+    let v = required(value, 100)
+    if not regex_match(v, /^[a-z0-9][a-z0-9-]*$/) { throw("URL 标识只允许小写字母、数字和连字符") }
+    return v
+}
+export fn kind(value) {
+    if not contains(["product", "news", "case", "page"], value) { throw("无效的内容类型") }
+    return value
+}
+export fn integer(value) {
+    if not regex_match(fallback(value,""), /^[0-9]{1,9}$/) { throw("无效的数字") }
+    return to_int(value)
+}
+export fn password(value, salt) {
+    if length(fallback(value,"")) < 12 or length(value) > 128 or contains(value, "\n") or contains(value, "\r") or contains(value, "\0") { throw("密码须为 12 至 128 个字符，不含换行") }
+    let result = run([openssl, "passwd", "-6", "-salt", "rounds=200000$" + salt, "-stdin"], { stdin: value + "\n", timeout: 10s })
+    if result.exit_code != 0 or not starts_with(trim(result.stdout), "$6$rounds=200000$") { throw("密码哈希失败，请使用 OpenSSL 3") }
+    return trim(result.stdout)
+}
+export fn headers() {
+    return { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "same-origin", "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" }
+}
+export fn response(body, status) { return web.html(body, { status: status, headers: headers() }) }
+export fn redirect(url) { return web.response({ status: 303, headers: put(headers(), "Location", url), body: "" }) }
+export fn cookie(name, value, age) {
+    let mut suffix = ""
+    if ready() and config().secure_cookie == true { suffix = "; Secure" }
+    return name + "=" + value + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=" + str(age) + suffix
+}
+export fn session(request, cfg) {
+    let token = fallback(request.cookies.hhy_session,"")
+    if not regex_match(token, /^[a-f0-9]{64}$/) { return null }
+    let row = first(cfg.db, "SELECT s.token_hash, a.username FROM cms_sessions s JOIN cms_admins a ON a.id=s.admin_id WHERE s.token_hash=? AND s.expires_at>UTC_TIMESTAMP()", [digest(token, cfg.secret)])
+    if row == null { return null }
+    return put(row, "csrf", digest("csrf", token))
+}
+export fn fields(request) { return web.multipart(request, file("tmp")) }
+export fn csrf(form, user) {
+    if user == null or form.csrf == null or form.csrf != user.csrf { throw("表单已过期，请刷新页面后重试") }
+    return form
+}
+export fn settings(db) {
+    let mut result = {}
+    for row in query(db, "SELECT name, value FROM cms_settings", []) { result = put(result, row.name, row.value) }
+    return result
+}
+export fn save_setting(db, key, value) {
+    exec(db, "INSERT INTO cms_settings(name,value) VALUES (?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)", [key, value])
+}
+export fn image_url(db, id) {
+    if id == null or str(id) == "" or str(id) == "0" { return "" }
+    let row = first(db, "SELECT filename FROM cms_media WHERE id=?", [id])
+    if row == null { return "" }
+    return "/media/" + row.filename
+}
+export fn audit(db, user, action, object_id) {
+    exec(db, "INSERT INTO cms_audit(actor,action,object_id) VALUES (?,?,?)", [user, action, object_id])
+}

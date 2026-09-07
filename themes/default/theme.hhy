@@ -1,0 +1,49 @@
+import "../../lib/core.hhy" as c
+import "../../lib/views.hhy" as v
+
+# Theme functions accept prepared data and never query the database.
+export fn url(kind, slug) {
+    let base = { product: "/products/", news: "/news/", case: "/cases/", page: "/page/" }[kind]
+    return base + slug
+}
+fn picture(item) {
+    let src = c.fallback(item.cover_url, "")
+    if src == "" { return "<div class=\"card-art art-" + c.e(item.kind) + "\"><span>" + v.label(item.kind) + "</span><i></i><b>↗</b></div>" }
+    return "<img class=\"card-image\" src=\"" + src + "\" alt=\"" + c.e(item.title) + "\" loading=\"lazy\">"
+}
+export fn cards(items) {
+    let mut html = ""
+    for item in items {
+        html = html + "<a class=\"content-card\" href=\"" + url(item.kind, item.slug) + "\">" + picture(item) + "<div class=\"card-text\"><span class=\"eyebrow\">" + v.label(item.kind) + "</span><h3>" + c.e(item.title) + "</h3><p>" + c.e(item.summary) + "</p><span class=\"read-more\">了解更多 ↗</span></div></a>"
+    }
+    if html == "" { return "<p class=\"empty\">内容正在准备中，敬请期待。</p>" }
+    return "<div class=\"card-grid\">" + html + "</div>"
+}
+export fn layout(settings, title, description, body) {
+    let mut nav = ""
+    for line in split(c.fallback(settings.nav,""), "\n") {
+        let parts = split(line, "|")
+        if length(parts) == 2 { nav = nav + "<a href=\"" + c.e(parts[1]) + "\">" + c.e(parts[0]) + "</a>" }
+    }
+    let mut logo = "<b class=\"mark\">H</b>"
+    let logo_url = c.fallback(settings.logo_url, "")
+    if logo_url != "" { logo = "<img class=\"logo-image\" src=\"" + logo_url + "\" alt=\"\">" }
+    let content = "<header class=\"site-header\"><a class=\"brand\" href=\"/\">" + logo + c.e(settings.name) + "</a><nav>" + nav + "</nav><a class=\"button small\" href=\"/contact\">聊聊你的想法 ↗</a></header><main>" + body + "</main><footer class=\"site-footer\"><div><a class=\"brand\" href=\"/\">" + logo + c.e(settings.name) + "</a><p>" + c.e(settings.footer) + "</p></div><div><p>" + c.e(settings.phone) + "</p><p>" + c.e(settings.email) + "</p></div><div class=\"footer-bottom\"><span>© " + c.e(settings.name) + "</span><span>Built with HHY CMS</span></div></footer>"
+    let html = v.document(title + " · " + settings.name, content)
+    return replace(html, "</head>", "<meta name=\"description\" content=\"" + c.e(description) + "\"></head>")
+}
+export fn detail(settings, item, preview) {
+    let mut flag = ""
+    if preview { flag = "<div class=\"preview-bar\">草稿预览 · 仅管理员可见 · 尚未对外发布 <a href=\"/admin/content\">返回后台</a></div>" }
+    let cover = c.fallback(item.cover_url, "")
+    let mut image = ""
+    if cover != "" { image = "<img class=\"detail-cover\" src=\"" + cover + "\" alt=\"" + c.e(item.title) + "\">" }
+    let body = flag + "<article class=\"article\"><a class=\"eyebrow\" href=\"/\">首页 / " + v.label(item.kind) + "</a><h1>" + c.e(item.title) + "</h1><p class=\"lead\">" + c.e(item.summary) + "</p>" + image + "<div class=\"prose\">" + c.rich(item.body) + "</div></article>"
+    let mut title = c.fallback(item.seo_title,"")
+    if title == "" { title = item.title }
+    let mut desc = c.fallback(item.seo_description,"")
+    if desc == "" { desc = item.summary }
+    let rendered = layout(settings, title, desc, body)
+    if preview { return replace(rendered, "</head>", "<meta name=\"robots\" content=\"noindex,nofollow\"></head>") }
+    return rendered
+}

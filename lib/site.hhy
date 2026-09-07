@@ -1,0 +1,73 @@
+import database
+import web
+import "core.hhy" as c
+import "views.hhy" as v
+import "../themes/default/theme.hhy" as theme
+
+export fn url(kind,slug) { return theme.url(kind,slug) }
+fn display_item(db,item) { return put(item,"cover_url",c.image_url(db,item.cover_id)) }
+fn display_settings(db,settings) { return put(settings,"logo_url",c.image_url(db,settings.logo_id)) }
+export fn cards(db,rows) {
+    let items = rows |> stream |> map { row -> display_item(db,parse_json(row.public_json)) } |> collect
+    return theme.cards(items)
+}
+export fn layout(db,settings,title,description,body) {
+    return theme.layout(display_settings(db,settings),title,description,body)
+}
+export fn detail(db,settings,item,preview) {
+    return theme.detail(display_settings(db,settings),display_item(db,item),preview)
+}
+fn home(db, settings) {
+    let mut body = ""
+    for block in c.query(db, "SELECT * FROM cms_blocks WHERE visible=1 ORDER BY position,id", []) {
+        if block.kind == "hero" {
+            body = body + "<section class=\"hero\"><div class=\"hero-copy\"><div class=\"eyebrow\"><span class=\"dot\"></span> BUILT ON TRUST. DRIVEN BY IDEAS.</div><h1>" + c.e(block.title) + "</h1><p>" + c.e(block.subtitle) + "</p><div class=\"hero-actions\"><a class=\"button\" href=\"/products\">探索我们的产品 ↗</a><a href=\"/page/about\">认识我们 <span>→</span></a></div><div class=\"hero-footnote\">专注每一次交付，认真回应每一份信任。</div></div><div class=\"hero-art\" aria-hidden=\"true\"><div class=\"art-grid\"></div><div class=\"orb orb-one\"></div><div class=\"orb orb-two\"></div><div class=\"art-caption\"><span>IDEAS INTO IMPACT</span><strong>向前，<br>不止一步。</strong><small>DESIGNED FOR WHAT'S NEXT ↗</small></div><span class=\"art-index\">01 — INFINITE POSSIBILITIES</span></div></section>"
+        } else if block.kind == "about" {
+            body = body + "<section class=\"about-section section\"><div class=\"eyebrow\">WHO WE ARE / 关于我们</div><div><h2>" + c.e(block.title) + "</h2><p>" + c.e(block.subtitle) + "</p><a class=\"text-link\" href=\"/page/about\">了解我们的故事 ↗</a></div></section>"
+        } else if block.kind == "contact" {
+            body = body + "<section class=\"contact-banner section\"><div><div class=\"eyebrow\">LET'S MAKE IT HAPPEN</div><h2>" + c.e(block.title) + "</h2><p>" + c.e(block.subtitle) + "</p></div><a class=\"button light\" href=\"/contact\">与我们联系 ↗</a></section>"
+        } else {
+            let paths = { product: "/products", case: "/cases", news: "/news" }
+            let rows = c.query(db, "SELECT public_json FROM cms_content WHERE kind=? AND public_json IS NOT NULL ORDER BY published_at DESC,id DESC LIMIT 3", [block.kind])
+            body = body + "<section class=\"section listing-section\"><div class=\"section-heading\"><div><div class=\"eyebrow\">" + v.label(block.kind) + " / SELECTED STORIES</div><h2>" + c.e(block.title) + "</h2><p>" + c.e(block.subtitle) + "</p></div><a class=\"text-link\" href=\"" + paths[block.kind] + "\">查看全部 ↗</a></div>" + cards(db, rows) + "</section>"
+        }
+    }
+    return c.response(layout(db, settings, settings.tagline, settings.description, body), 200)
+}
+export fn handle(request) {
+    if not c.ready() { return c.redirect("/install") }
+    let db = c.config().db
+    let settings = c.settings(db)
+    if request.path == "/" { return home(db, settings) }
+    if request.path == "/contact" {
+        let body = "<section class=\"section contact-page\"><div class=\"eyebrow\">LET'S TALK / 联系我们</div><h1>很高兴，与你相遇。</h1><p class=\"lead\">每一次合作，都从一次真诚的对话开始。</p><div class=\"contact-grid\"><div><span>电话咨询</span><h2>" + c.e(settings.phone) + "</h2></div><div><span>电子邮件</span><h2>" + c.e(settings.email) + "</h2></div><div><span>公司地址</span><h2>" + c.e(settings.address) + "</h2></div></div></section>"
+        return c.response(layout(db, settings, "联系我们", settings.description, body), 200)
+    }
+    let kind = { "/products": "product", "/cases": "case", "/news": "news" }[request.path]
+    if kind != null {
+        let page = c.integer(c.fallback(request.query_params.page,"1"))
+        if page < 1 or page > 10000 { return v.error("页码无效", 400) }
+        let cat = c.integer(c.fallback(request.query_params.category,"0"))
+        let rows = c.query(db, "SELECT public_json FROM cms_content WHERE kind=? AND public_json IS NOT NULL AND (?=0 OR public_category_id=?) ORDER BY published_at DESC,id DESC LIMIT 12 OFFSET ?", [kind,cat,cat,(page-1)*12])
+        let mut categories = "<a href=\"" + request.path + "\">全部</a>"
+        for category in c.query(db, "SELECT * FROM cms_categories WHERE kind=? ORDER BY id", [kind]) { categories = categories + "<a href=\"" + request.path + "?category=" + category.id + "\">" + c.e(category.name) + "</a>" }
+        let mut previous = page - 1
+        if previous < 1 { previous = 1 }
+        let pagination = "<div class=\"pagination\"><a href=\"?page=" + c.str(previous) + "&amp;category=" + c.str(cat) + "\">← 上一页</a><span>第 " + c.str(page) + " 页</span><a href=\"?page=" + c.str(page+1) + "&amp;category=" + c.str(cat) + "\">下一页 →</a></div>"
+        return c.response(layout(db, settings, v.label(kind), settings.description, "<section class=\"section\"><div class=\"eyebrow\">EXPLORE / " + v.label(kind) + "</div><h1>" + v.label(kind) + "中心</h1><nav class=\"tabs\">" + categories + "</nav>" + cards(db,rows) + pagination + "</section>"), 200)
+    }
+    let part = split(request.path, "/")[1]
+    let detail_kind = { products: "product", cases: "case", news: "news", page: "page" }[part]
+    let item = c.first(db, "SELECT public_json FROM cms_content WHERE kind=? AND slug=? AND public_json IS NOT NULL", [detail_kind,request.params.slug])
+    if item == null { return c.response(layout(db,settings,"页面不存在","", "<section class=\"section\"><h1>这页暂时不在这里。</h1><a href=\"/\">返回首页 →</a></section>"),404) }
+    return c.response(detail(db,settings,parse_json(item.public_json),false),200)
+}
+export fn sitemap(request) {
+    if not c.ready() { return c.response("尚未安装", 503) }
+    let cfg = c.config()
+    let base = c.settings(cfg.db).domain
+    let mut xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">"
+    for route in ["/", "/products", "/cases", "/news", "/contact"] { xml = xml + "<url><loc>" + c.e(base + route) + "</loc></url>" }
+    for item in database.stream(cfg.db, "SELECT kind,slug FROM cms_content WHERE public_json IS NOT NULL ORDER BY id", []) { xml = xml + "<url><loc>" + c.e(base + url(item.kind,item.slug)) + "</loc></url>" }
+    return web.text(xml + "</urlset>", { headers: { "Content-Type": "application/xml; charset=utf-8", "X-Content-Type-Options": "nosniff" } })
+}

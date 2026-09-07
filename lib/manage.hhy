@@ -1,0 +1,144 @@
+import database
+import "core.hhy" as c
+import "views.hhy" as v
+import "content.hhy" as content
+
+export fn dashboard(db,user) {
+    let totals = c.query(db,"SELECT kind,COUNT(*) AS total,SUM(public_json IS NOT NULL) AS published FROM cms_content GROUP BY kind",[])
+    let mut stats = "<div class=\"stats-grid\">"
+    for kind in ["product","case","news","page"] {
+        let mut total = "0"
+        let mut published = "0"
+        for row in totals { if row.kind == kind { total = row.total; published = row.published } }
+        stats = stats + "<a class=\"stat-card\" href=\"/admin/content?kind=" + kind + "\"><span>" + v.label(kind) + "</span><strong>" + total + "</strong><small>" + published + " 条已发布 <b>↗</b></small></a>"
+    }
+    let mut rows = ""
+    for item in c.query(db,"SELECT title,id,kind,updated_at FROM cms_content ORDER BY updated_at DESC,id DESC LIMIT 6",[]) { rows = rows + "<a class=\"recent-row\" href=\"/admin/edit?id=" + item.id + "\"><span><small>" + v.label(item.kind) + "</small><strong>" + c.e(item.title) + "</strong></span><span class=\"muted\">" + c.e(item.updated_at) + "　↗</span></a>" }
+    let mut logs = ""
+    let action_names = { "auth.login":"登录后台", "installation.completed":"完成站点安装", "content.draft":"保存草稿", "content.publish":"发布内容", "content.remove-or-unpublish":"删除或下线内容", "settings.saved":"更新站点设置", "block.saved":"更新首页区块", "category.save":"保存分类", "category.delete":"删除分类", "media.upload":"上传图片", "media.delete":"删除图片" }
+    for entry in c.query(db,"SELECT actor,action,created_at FROM cms_audit ORDER BY id DESC LIMIT 5",[]) { logs = logs + "<div class=\"log-item\"><span class=\"dot\"></span><div><strong>" + c.e(c.fallback(action_names[entry.action],"更新内容")) + "</strong><small>" + c.e(entry.actor) + " · " + c.e(entry.created_at) + "</small></div></div>" }
+    let body = "<section class=\"welcome-banner\"><div><span class=\"eyebrow\">LET'S BUILD SOMETHING GOOD</span><h2>网站的下一次更新，从这里开始。</h2><p>发布新产品、分享新动态，让每一位访客看见你的进展。</p><a class=\"button\" href=\"/admin/edit?kind=news\">写一条新动态 ＋</a></div><div class=\"welcome-art\" aria-hidden=\"true\">↗</div></section>" + stats + "</div><div class=\"dashboard-grid\"><section class=\"panel\"><div class=\"section-heading\"><h2>最近编辑</h2><a href=\"/admin/content?kind=news\">管理内容 →</a></div>" + rows + "</section><section class=\"panel\"><h2>最近操作</h2>" + logs + "</section></div><section class=\"quick-links\"><a href=\"/admin/home\"><strong>调整首页区块 ↗</strong><span>用清晰的结构讲好企业故事</span></a><a href=\"/admin/settings\"><strong>完善企业资料 ↗</strong><span>让访客更容易了解并联系你</span></a><a href=\"/admin/media\"><strong>管理品牌素材 ↗</strong><span>图片统一管理，内容随时可用</span></a></section>"
+    return c.response(v.admin("工作台",body,user,"home"),200)
+}
+export fn settings_page(request,db,user) {
+    let s = c.settings(db)
+    let body = "<section class=\"panel narrow\"><h2>品牌与基本信息</h2>" + v.field("网站名称 *","name",s.name,"text") + v.field("品牌标语","tagline",s.tagline,"text") + v.area("网站描述 / 默认 SEO 描述","description",s.description) + content.media_select(db,"logo_id",s.logo_id) + v.field("网站地址（不含末尾斜杠）","domain",s.domain,"url") + "<h2>联系方式</h2><div class=\"form-grid\">" + v.field("电话","phone",s.phone,"text") + v.field("邮箱","email",s.email,"email") + "</div>" + v.field("地址","address",s.address,"text") + v.field("页脚文案","footer",s.footer,"text") + "<h2>导航菜单</h2><p class=\"muted\">每行：名称|站内路径。可改名、排序或移除；仅允许公开官网路径。</p>" + v.area("导航","nav",s.nav) + v.button("保存站点设置") + "</section>"
+    return c.response(v.admin("站点设置",v.saved(request) + v.form("/admin/settings",user.csrf,body),user,"settings"),200)
+}
+export fn save_settings(db,user,f) {
+    c.csrf(f,user)
+    let domain = c.required(f.domain,250)
+    if not regex_match(domain,/^https?:\/\/[A-Za-z0-9.-]+(:[0-9]+)?$/) { throw("网站地址格式无效") }
+    let nav = c.clean(f.nav,2000)
+    if length(split(nav,"\n")) > 10 { throw("导航最多 10 项") }
+    for line in split(nav,"\n") {
+        let parts = split(line,"|")
+        if length(parts) != 2 { throw("导航格式应为 名称|路径") }
+        c.required(parts[0],20)
+        if not regex_match(parts[1],/^\/(products|cases|news|contact|page\/[a-z0-9-]+)?$/) { throw("导航只允许官网列表、联系页或 /page/页面标识") }
+    }
+    let tx = database.begin(db)
+    try {
+        let logo = c.integer(f.logo_id)
+        if logo != 0 and c.first(tx,"SELECT id FROM cms_media WHERE id=? FOR UPDATE",[logo]) == null { throw("Logo 图片不存在") }
+        c.save_setting(tx,"name",c.required(f.name,100))
+        c.save_setting(tx,"domain",domain)
+        c.save_setting(tx,"nav",nav)
+        c.save_setting(tx,"logo_id",c.str(logo))
+        for key in ["tagline","description","phone","email","address","footer"] { c.save_setting(tx,key,c.clean(f[key],500)) }
+        c.audit(tx,user.username,"settings.saved","site")
+        database.commit(tx)
+    } catch err { let ignored = attempt { database.rollback(tx) }; throw(err) }
+    return c.redirect("/admin/settings?saved=1")
+}
+export fn blocks_page(request,db,user) {
+    let mut body = "<p class=\"muted\">按顺序号从小到大展示；每个区块独立保存。隐藏不会删除内容。</p>"
+    for block in c.query(db,"SELECT * FROM cms_blocks ORDER BY position,id",[]) {
+        let fields = v.hidden("id",block.id) + "<section class=\"panel block-editor\"><div><span class=\"pill\">" + c.e({hero:"首屏横幅",about:"企业介绍",product:"产品推荐",case:"客户案例",news:"新闻动态",contact:"联系信息"}[block.kind]) + "</span>" + v.field("显示顺序","position",block.position,"number") + "<label class=\"field\"><span>状态</span><select name=\"visible\">" + v.option("1","显示",block.visible) + v.option("0","隐藏",block.visible) + "</select></label></div><div>" + v.area("区块标题","title",block.title) + v.field("区块说明","subtitle",block.subtitle,"text") + v.button("保存区块") + "</div></section>"
+        body = body + v.form("/admin/home",user.csrf,fields)
+    }
+    return c.response(v.admin("首页区块",v.saved(request) + body,user,"blocks"),200)
+}
+export fn save_block(db,user,f) {
+    c.csrf(f,user)
+    let id = c.integer(f.id)
+    if not contains(["0","1"],f.visible) { throw("区块状态无效") }
+    let statements = [{ sql:"UPDATE cms_blocks SET title=?,subtitle=?,position=?,visible=? WHERE id=?", params:[c.required(f.title,200),c.clean(f.subtitle,500),c.integer(f.position),to_int(f.visible),id] }, { sql:"INSERT INTO cms_audit(actor,action,object_id) VALUES (?,'block.saved',?)",params:[user.username,c.str(id)] }]
+    database.transaction(db,statements)
+    return c.redirect("/admin/home?saved=1")
+}
+export fn categories_page(request,db,user) {
+    let mut rows = ""
+    for cat in c.query(db,"SELECT * FROM cms_categories ORDER BY kind,id LIMIT 200",[]) {
+        rows = rows + "<section class=\"category-row\"><span class=\"pill\">" + v.label(cat.kind) + "</span>" + v.form("/admin/categories",user.csrf,v.hidden("id",cat.id) + v.hidden("kind",cat.kind) + v.field("分类名称","name",cat.name,"text") + "<button name=\"intent\" value=\"save\">保存</button><button class=\"danger\" name=\"intent\" value=\"delete\" data-confirm=\"确定删除这个分类？被内容引用的分类无法删除。\">删除</button>") + "</section>"
+    }
+    let add = "<section class=\"panel\"><h2>新建分类</h2>" + v.form("/admin/categories",user.csrf,v.hidden("id","0") + "<select name=\"kind\"><option value=\"product\">产品</option><option value=\"case\">案例</option><option value=\"news\">新闻</option><option value=\"page\">页面</option></select>" + v.field("分类名称","name","","text") + "<button class=\"button\" name=\"intent\" value=\"save\">添加分类</button>") + "</section>"
+    return c.response(v.admin("内容分类",v.saved(request) + add + "<section class=\"panel\">" + rows + "</section>",user,"categories"),200)
+}
+export fn save_category(db,user,f) {
+    c.csrf(f,user)
+    let id = c.integer(f.id)
+    let tx = database.begin(db)
+    try {
+        if f.intent == "delete" {
+            c.first(tx,"SELECT id FROM cms_categories WHERE id=? FOR UPDATE",[id])
+            if c.first(tx,"SELECT id FROM cms_content WHERE category_id=? OR public_category_id=? LIMIT 1",[id,id]) != null { throw("分类被内容引用，请先修改内容并重新发布") }
+            c.exec(tx,"DELETE FROM cms_categories WHERE id=?",[id])
+        } else if f.intent == "save" {
+            if id == 0 {
+                let count = c.first(tx,"SELECT COUNT(*) AS total FROM cms_categories",[])
+                if to_int(count.total) >= 200 { throw("第一版最多支持 200 个分类") }
+                c.exec(tx,"INSERT INTO cms_categories(kind,name) VALUES (?,?)",[c.kind(f.kind),c.required(f.name,100)]) }
+            else { c.exec(tx,"UPDATE cms_categories SET name=? WHERE id=?",[c.required(f.name,100),id]) }
+        } else { throw("无效分类操作") }
+        c.audit(tx,user.username,"category." + f.intent,c.str(id))
+        database.commit(tx)
+    } catch err { let ignored = attempt { database.rollback(tx) }; throw(err) }
+    return c.redirect("/admin/categories?saved=1")
+}
+export fn media_page(request,db,user) {
+    let page = c.integer(c.fallback(request.query_params.page,"1"))
+    if page < 1 or page > 10000 { throw("页码无效") }
+    let mut cards = ""
+    for item in c.query(db,"SELECT * FROM cms_media ORDER BY id DESC LIMIT 24 OFFSET ?",[(page-1)*24]) {
+        cards = cards + "<article class=\"media-card\"><img src=\"/media/" + item.filename + "\" alt=\"" + c.e(item.original_name) + "\"><div><strong>" + c.e(item.original_name) + "</strong><small>#" + item.id + " · " + item.size + " bytes</small>" + v.form("/admin/media/delete",user.csrf,v.hidden("id",item.id) + "<button class=\"link-button danger\" data-confirm=\"确定删除图片？被内容或 Logo 引用的图片无法删除。\">删除图片</button>") + "</div></article>"
+    }
+    if cards == "" { cards = "<div class=\"empty\">还没有素材。上传第一张品牌图片吧。</div>" }
+    let upload = v.form("/admin/media",user.csrf,"<section class=\"upload-box\"><div><h2>让好内容，配上好图片。</h2><p class=\"muted\">支持 PNG、JPEG，单张不超过 2 MiB。替换图片时上传新素材，再在内容或设置中选择。</p></div><input type=\"file\" name=\"image\" accept=\"image/png,image/jpeg\" required>" + v.button("上传图片 ↑") + "</section>")
+    let mut previous = page-1
+    if previous < 1 { previous = 1 }
+    return c.response(v.admin("媒体库",v.saved(request) + upload + "<div class=\"media-grid\">" + cards + "</div><div class=\"pagination\"><a href=\"?page=" + c.str(previous) + "\">← 上一页</a><span>第 " + c.str(page) + " 页</span><a href=\"?page=" + c.str(page+1) + "\">下一页 →</a></div>",user,"media"),200)
+}
+export fn upload(db,user,form) {
+    c.csrf(form.fields,user)
+    let image = form.files.image
+    if image == null or image.size == 0 or image.size > 2097152 { throw("请选择不超过 2 MiB 的 PNG 或 JPEG 图片") }
+    let mime = run(["file","--brief","--mime-type",c.data_dir + "/tmp/" + image.path.name],{ timeout:5s })
+    let ext = { "image/png":".png", "image/jpeg":".jpg" }[trim(mime.stdout)]
+    if mime.exit_code != 0 or ext == null { throw("图片格式不支持，或内容与图片类型不符") }
+    let name = c.random() + ext
+    copy(image.path,c.file("uploads/" + name))
+    let result = attempt { c.exec(db,"INSERT INTO cms_media(filename,original_name,size) VALUES (?,?,?)",[name,c.clean(image.filename,255),image.size]) }
+    if not result.ok { remove(c.file("uploads/" + name)); throw("图片记录保存失败，请重试") }
+    c.audit(db,user.username,"media.upload",c.str(result.value.last_insert_id))
+    return c.redirect("/admin/media?saved=1")
+}
+export fn delete_media(db,user,f) {
+    c.csrf(f,user)
+    let id = c.integer(f.id)
+    let tx = database.begin(db)
+    let mut filename = ""
+    try {
+        let row = c.first(tx,"SELECT filename FROM cms_media WHERE id=? FOR UPDATE",[id])
+        if row == null { throw("图片不存在") }
+        let references = c.first(tx,"SELECT id FROM cms_content WHERE cover_id=? OR public_cover_id=? LIMIT 1",[id,id])
+        let logo = c.first(tx,"SELECT name FROM cms_settings WHERE name='logo_id' AND value=?",[c.str(id)])
+        if references != null or logo != null { throw("图片仍被草稿、公开内容或 Logo 引用，不能删除") }
+        filename = row.filename
+        c.exec(tx,"DELETE FROM cms_media WHERE id=?",[id])
+        c.audit(tx,user.username,"media.delete",c.str(id))
+        database.commit(tx)
+    } catch err { let ignored = attempt { database.rollback(tx) }; throw(err) }
+    let ignored = attempt { remove(c.file("uploads/" + filename)) }
+    return c.redirect("/admin/media?saved=1")
+}
